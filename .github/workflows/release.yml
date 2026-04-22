@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# 让所有 JavaScript actions（checkout / setup-node / pnpm-setup / gh-release）
+# 在新的 Node 24 runtime 上执行（2026-06-02 起官方强制）。提前切换消除
+# deprecation 警告，也避免后续被动升级时的兼容问题。
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: ${{ matrix.platform.name }}
@@ -49,7 +55,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       # ── Rust toolchain ────────────────────────────────────────
