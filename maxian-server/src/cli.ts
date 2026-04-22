@@ -1776,6 +1776,39 @@ async function main() {
 	 *   5. 有工具调用 → 执行工具，将结果追加到历史，继续循环
 	 */
 	// ── AGENTS.md / CLAUDE.md 自动加载（向上找 + 全局路径） ─────────────
+	/**
+	 * 生成当前平台信息注入到系统提示词。
+	 * 让 AI 生成 shell 命令时避开平台不兼容的调用（ls vs dir, && 语法等）。
+	 * Windows 下如果探测到 Git Bash，会告诉 AI 可以用 unix 语法；否则提示只能用 cmd/PowerShell。
+	 */
+	function formatPlatformInfo(): string {
+		const plat = process.platform;
+		let osLabel: string;
+		let shellHint: string;
+		if (plat === 'darwin') {
+			osLabel = 'macOS';
+			shellHint = '默认 shell: zsh / bash，支持标准 Unix 命令（ls/grep/cat/find/sed 等）和 && 链式';
+		} else if (plat === 'linux') {
+			osLabel = 'Linux';
+			shellHint = '默认 shell: bash，支持标准 Unix 命令和 && 链式';
+		} else if (plat === 'win32') {
+			// 检测是否装有 Git Bash（与工具执行端的探测逻辑保持一致）
+			const gitBashPaths = [
+				'C:\\Program Files\\Git\\bin\\bash.exe',
+				'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+			];
+			const hasGitBash = gitBashPaths.some(p => { try { return fs.existsSync(p); } catch { return false; } });
+			osLabel = 'Windows';
+			shellHint = hasGitBash
+				? '检测到 Git Bash，execute_command / bash 工具已**自动路由到 bash**，可直接使用 Unix 命令（ls/cat/grep/&& 等）。路径分隔符用正斜杠或反斜杠均可。'
+				: '**未检测到 Git Bash**，execute_command 将退回 PowerShell / cmd.exe 执行。请优先使用**PowerShell 语法**（Get-ChildItem、Get-Content、`;` 分隔命令代替 `&&`），避免 `ls/cat/grep/rm -rf` 等 Unix 命令。';
+		} else {
+			osLabel = plat;
+			shellHint = '未知平台';
+		}
+		return `操作系统：${osLabel}\n${shellHint}`;
+	}
+
 	function loadProjectInstructions(workspacePath: string): string {
 		const candidates: string[] = [];
 		const targets = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
@@ -1930,6 +1963,7 @@ PLAN MODE RULES
 4. 计划完成后，用户可点击"开始执行"切换到 Code 模式实际执行
 
 工作区根目录：${workspacePath}
+${formatPlatformInfo()}
 只读工具：read_file, search_files, list_files`
 			: isChatMode
 			? `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
@@ -1968,7 +2002,8 @@ FOLLOWUP SUGGESTIONS（可选）
 \`\`\`
 该区块会被前端自动抽取并显示为"建议追问"按钮。如果回答已经完整、无需追问，不要输出此区块。
 
-工作区根目录：${workspacePath}`
+工作区根目录：${workspacePath}
+${formatPlatformInfo()}`
 			: `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
 
 你是码弦 AI 编程助手（agent 模式），可以直接操作文件系统完成编程任务。
@@ -2020,6 +2055,7 @@ TOOL SELECTION
 SYSTEM INFO
 
 工作区根目录：${workspacePath}
+${formatPlatformInfo()}
 可用工具：read_file, write_to_file, edit, multiedit, search_files, list_files, execute_command, todo_write, web_fetch, load_skill
 
 ====

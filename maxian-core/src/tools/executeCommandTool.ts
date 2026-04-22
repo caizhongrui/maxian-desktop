@@ -22,6 +22,37 @@ import { spawn, ChildProcess } from 'child_process';
 import type { IToolContext } from './IToolContext.js';
 import type { ToolResponse } from '../types/toolTypes.js';
 
+/**
+ * Windows 下挑选合适的 shell（Git Bash → PowerShell → null 让 spawn 用 cmd 兜底）
+ * 目的：AI 生成的 Unix 命令（ls/grep/cat/&& 链式）在 cmd.exe 下会"不识别"。
+ */
+function pickWindowsShell(): { shell: string; prefixArgs: string[] } | null {
+	if (process.platform !== 'win32') return null;
+	const candidates = [
+		'C:\\Program Files\\Git\\bin\\bash.exe',
+		'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+		'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+	];
+	for (const p of candidates) {
+		try { if (fs.existsSync(p)) return { shell: p, prefixArgs: ['-lc'] }; } catch { /* ignore */ }
+	}
+	const pathEntries = (process.env.PATH ?? '').split(';');
+	for (const dir of pathEntries) {
+		try {
+			const bashPath = path.join(dir, 'bash.exe');
+			if (fs.existsSync(bashPath)) return { shell: bashPath, prefixArgs: ['-lc'] };
+		} catch { /* ignore */ }
+	}
+	const psCandidates = [
+		'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+		process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : '',
+	].filter(Boolean);
+	for (const p of psCandidates) {
+		try { if (fs.existsSync(p)) return { shell: p, prefixArgs: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command'] }; } catch { /* ignore */ }
+	}
+	return null;
+}
+
 // ========== ANSI 色码剥除 ==========
 /** 匹配 ANSI escape 序列（颜色/光标控制等） */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~])|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[=>]/g;
@@ -535,20 +566,24 @@ async function executeForegroundCommand(
 		// dev server / watcher 检测 → 更激进的 idle-detach 策略
 		const isDevServer = isDevServerCommand(command);
 
-		// 使用 shell 执行命令
-		const childProcess = spawn(command, {
+		// Windows: 优先走 Git Bash / PowerShell，避免 cmd.exe 不识别 Unix 命令
+		const winShell = pickWindowsShell();
+
+		const spawnOpts: any = {
 			cwd: workingDir,
-			shell: true,
 			env: {
 				...process.env,
-				FORCE_COLOR: '0', // 禁用颜色输出（多数工具支持）
+				FORCE_COLOR: '0',
 				NO_COLOR: '1',
 				TERM: 'dumb',
 				CI: 'true',
 			},
-			// detached: true 让 dev server 在父进程退出后继续存活
 			detached: isDevServer,
-		});
+			windowsHide: true,    // ⚠️ 禁止 Windows 弹黑色控制台窗口
+		};
+		const childProcess = winShell
+			? spawn(winShell.shell, [...winShell.prefixArgs, command], spawnOpts)
+			: spawn(command, { ...spawnOpts, shell: true });
 
 		let completed = false;
 		let lastOutputTime = Date.now();
@@ -681,15 +716,16 @@ async function executeBackgroundCommand(
 ): Promise<ToolResponse> {
 	const taskId = generateTaskId();
 
-	const childProcess = spawn(command, {
+	const winShell = pickWindowsShell();
+	const spawnOpts: any = {
 		cwd: workingDir,
-		shell: true,
 		detached: true,
-		env: {
-			...process.env,
-			FORCE_COLOR: '0',
-		},
-	});
+		env: { ...process.env, FORCE_COLOR: '0' },
+		windowsHide: true,
+	};
+	const childProcess = winShell
+		? spawn(winShell.shell, [...winShell.prefixArgs, command], spawnOpts)
+		: spawn(command, { ...spawnOpts, shell: true });
 
 	const task: BackgroundTask = {
 		process: childProcess,
