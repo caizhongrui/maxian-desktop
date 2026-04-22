@@ -922,6 +922,18 @@ export default function App() {
     if (recvDotRef) recvDotRef.classList.remove('recv-dot-active')
   }
 
+  // ─── 平台检测：给 body 加 class，让 CSS 能区分 macOS / Windows / Linux ──
+  // macOS 用 titleBarStyle:Overlay + 我们自己的标题栏（替代原生）
+  // Windows / Linux 用系统原生标题栏（隐藏我们自定义的那条，避免双标题栏）
+  onMount(() => {
+    const ua = navigator.userAgent.toLowerCase()
+    let platformKey: 'mac' | 'win' | 'linux' | 'other' = 'other'
+    if (ua.includes('mac')) platformKey = 'mac'
+    else if (ua.includes('win')) platformKey = 'win'
+    else if (ua.includes('linux')) platformKey = 'linux'
+    document.body.classList.add(`platform-${platformKey}`)
+  })
+
   // ─── 任务卡死兜底检测 ──────────────────────────────────────────────────
   // 若 sending=true 但 60 秒内没收到任何 SSE 事件，主动从服务端查一次消息快照
   //（大概率 SSE 被中间层 idle-kill 了），把 UI 补齐到最新状态。
@@ -4417,6 +4429,20 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.1.3',
+      date: '2026-04-22',
+      changes: [
+        '🪟 Windows / Linux 隐藏自定义标题栏，改用系统原生标题栏（修复双标题栏重叠）',
+        '🔓 Tauri HTTP 插件白名单放行任意 http/https host，修复打包后内网 HTTP 后端登录被拦',
+        '💬 登录错误提示显示真实原因（plugin-http 权限拒绝 / 网络不通 / 账号密码错误）而不是固定 fallback',
+        '📦 Sidecar 机制：maxian-server 用 Bun --compile 打包成 58MB 单文件二进制',
+        '🎯 跨平台支持：Tauri externalBin 自动按平台选 bin，用户无需单独装 Node.js',
+        '🚀 GitHub Actions CI：macOS(arm64/x64) + Windows + Linux 四平台矩阵自动打包',
+        '💿 macOS DMG 用 hdiutil 手工打包（绕开 create-dmg 中文 productName 的 bug）',
+        '📏 Node.js 20 → 22 LTS，加 FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 消除 deprecation 警告',
+      ],
+    },
+    {
       version: '0.1.1',
       date: '2026-04-22',
       changes: [
@@ -4750,7 +4776,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.1.1</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.1.3</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4765,7 +4791,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.1.1
+                    当前版本 0.1.3
                   </Show>
                 </div>
               </div>

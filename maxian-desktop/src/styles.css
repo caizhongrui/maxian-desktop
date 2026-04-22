@@ -169,6 +169,17 @@
     vertical-align: middle;
   }
 
+  /* ─── Windows / Linux 使用原生标题栏，隐藏我们自定义的那条 ──
+     避免 "系统原生标题栏 + 我们画的标题栏" 双层重叠。
+     仅 macOS（.platform-mac body class）保留自定义标题栏做 Overlay 拟态。
+  */
+  body.platform-win .window-titlebar,
+  body.platform-win .window-titlebar-placeholder,
+  body.platform-linux .window-titlebar,
+  body.platform-linux .window-titlebar-placeholder {
+    display: none !important;
+  }
+
   /* ─── Layout ─────────────────────────────────────── */
   .app-shell {
     display: flex;
