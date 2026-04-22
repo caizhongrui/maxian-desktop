@@ -48,7 +48,7 @@ function buildOne(key) {
 		process.exit(1);
 	}
 	if (!existsSync(DIST_CLI)) {
-		console.error(`[build-bin] 未找到 ${DIST_CLI}，请先 yarn build`);
+		console.error(`[build-bin] 未找到 ${DIST_CLI}，请先 pnpm run build`);
 		process.exit(1);
 	}
 	mkdirSync(OUT_DIR, { recursive: true });
@@ -63,7 +63,8 @@ function buildOne(key) {
 		`--outfile`, outFile,
 		DIST_CLI,
 	];
-	const r = spawnSync('bun', args, { stdio: 'inherit', cwd: ROOT });
+	// Windows 下 npm 全局 bin 也可能拿不到 bun；shell: true 让 PATHEXT 生效
+	const r = spawnSync('bun', args, { stdio: 'inherit', cwd: ROOT, shell: process.platform === 'win32' });
 	if (r.status !== 0) {
 		console.error(`[build-bin] ${key} 失败 (exit=${r.status})`);
 		process.exit(r.status ?? 1);

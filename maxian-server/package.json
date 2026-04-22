@@ -19,16 +19,16 @@
     "maxian-server": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js 2>/dev/null || true",
+    "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
     "clean": "rm -rf dist bin",
-    "build:bin": "yarn build && node scripts/build-bin.mjs",
-    "build:bin:darwin-arm64": "yarn build && node scripts/build-bin.mjs darwin-arm64",
-    "build:bin:darwin-x64":   "yarn build && node scripts/build-bin.mjs darwin-x64",
-    "build:bin:win32-x64":    "yarn build && node scripts/build-bin.mjs win32-x64",
-    "build:bin:linux-x64":    "yarn build && node scripts/build-bin.mjs linux-x64"
+    "build:bin": "pnpm run build && node scripts/build-bin.mjs",
+    "build:bin:darwin-arm64": "pnpm run build && node scripts/build-bin.mjs darwin-arm64",
+    "build:bin:darwin-x64":   "pnpm run build && node scripts/build-bin.mjs darwin-x64",
+    "build:bin:win32-x64":    "pnpm run build && node scripts/build-bin.mjs win32-x64",
+    "build:bin:linux-x64":    "pnpm run build && node scripts/build-bin.mjs linux-x64"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
