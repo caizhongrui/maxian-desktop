@@ -578,8 +578,9 @@ async function executeForegroundCommand(
 				TERM: 'dumb',
 				CI: 'true',
 			},
-			detached: isDevServer,
-			windowsHide: true,    // ⚠️ 禁止 Windows 弹黑色控制台窗口
+			// Windows 下绝不 detached，参考 OpenCode 的 cross-spawn-spawner 行为
+			detached: process.platform !== 'win32' && isDevServer,
+			windowsHide: true,
 		};
 		const childProcess = winShell
 			? spawn(winShell.shell, [...winShell.prefixArgs, command], spawnOpts)
@@ -719,7 +720,8 @@ async function executeBackgroundCommand(
 	const winShell = pickWindowsShell();
 	const spawnOpts: any = {
 		cwd: workingDir,
-		detached: true,
+		// Windows 下后台任务用 child.unref() 脱离，不用 detached（会引起孤儿进程）
+		detached: process.platform !== 'win32',
 		env: { ...process.env, FORCE_COLOR: '0' },
 		windowsHide: true,
 	};

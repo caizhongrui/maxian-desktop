@@ -11,41 +11,78 @@ import * as fs from 'node:fs';
 import type { IToolContext } from './IToolContext.js';
 
 /**
- * Windows 下挑选合适的 shell：
- * 1. Git Bash（大部分开发者装 Git for Windows 自带，支持 ls/grep/cat/&& 等 Unix 语法）
- * 2. PowerShell（内置，ls/cat 有别名，但 && 需 PS 7+）
- * 3. 退回 cmd.exe（兜底，兼容差）
+ * Windows 下挑选合适的 shell（借鉴 OpenCode 的 Shell 模块实现）
  *
- * 返回 { shell, prefix } —— prefix 为调用参数前缀（bash 用 `-lc`、cmd 用 `/s /c`）
+ * 优先级：
+ *   1. 环境变量 MAXIAN_GIT_BASH_PATH 指定的 bash.exe（用户显式覆盖）
+ *   2. 通过 `where git` 定位 git.exe 后推导同目录的 bash.exe（最可靠）
+ *   3. PATH 里任意 bash.exe（msys / wsl / scoop / choco 装的）
+ *   4. Git for Windows 几个常见默认路径（%PF%、%PF(x86)%）
+ *   5. PowerShell 7 / Windows PowerShell（-NoLogo -NoProfile -NonInteractive -Command）
+ *   6. 返回 null → 让上层退回 cmd.exe 兜底
+ *
+ * 用 which 式定位比硬编码路径鲁棒得多，覆盖 scoop/choco/winget 等分发方式。
  */
+function whichOnWindows(bin: string): string | null {
+	if (process.platform !== 'win32') return null;
+	try {
+		// Node 子进程调用 where，避免引入依赖
+		const { execSync } = require('node:child_process') as typeof import('node:child_process');
+		const out = execSync(`where ${bin}`, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+		const first = out.split(/\r?\n/).find(Boolean);
+		return first && fs.existsSync(first) ? first : null;
+	} catch { return null; }
+}
+
 function pickWindowsShell(): { shell: string; prefixArgs: string[] } | null {
 	if (process.platform !== 'win32') return null;
-	const candidates = [
+
+	// 1. 环境变量显式覆盖
+	const envOverride = process.env.MAXIAN_GIT_BASH_PATH;
+	if (envOverride && fs.existsSync(envOverride)) {
+		return { shell: envOverride, prefixArgs: ['-lc'] };
+	}
+
+	// 2. 通过 `where git` 定位，然后从 git.exe 路径推导 bash.exe
+	//    典型：C:\Program Files\Git\cmd\git.exe → C:\Program Files\Git\bin\bash.exe
+	const gitExe = whichOnWindows('git');
+	if (gitExe) {
+		const gitRoot = path.resolve(path.dirname(gitExe), '..');  // Git 根目录
+		const candidates = [
+			path.join(gitRoot, 'bin', 'bash.exe'),
+			path.join(gitRoot, 'usr', 'bin', 'bash.exe'),
+		];
+		for (const p of candidates) {
+			if (fs.existsSync(p)) return { shell: p, prefixArgs: ['-lc'] };
+		}
+	}
+
+	// 3. 直接 `where bash`
+	const bashExe = whichOnWindows('bash');
+	if (bashExe) return { shell: bashExe, prefixArgs: ['-lc'] };
+
+	// 4. 几个常见默认路径兜底
+	const hardcoded = [
 		'C:\\Program Files\\Git\\bin\\bash.exe',
 		'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
 		'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
 	];
-	for (const p of candidates) {
+	for (const p of hardcoded) {
 		try { if (fs.existsSync(p)) return { shell: p, prefixArgs: ['-lc'] }; } catch { /* ignore */ }
 	}
-	// PATH 里找 bash（wsl / msys）
-	const pathSep = ';';
-	const pathEntries = (process.env.PATH ?? '').split(pathSep);
-	for (const dir of pathEntries) {
-		try {
-			const bashPath = path.join(dir, 'bash.exe');
-			if (fs.existsSync(bashPath)) return { shell: bashPath, prefixArgs: ['-lc'] };
-		} catch { /* ignore */ }
-	}
-	// 退回 PowerShell 7 或内置 PowerShell
+
+	// 5. PowerShell 7 / 内置 PowerShell
 	const psCandidates = [
+		whichOnWindows('pwsh'),
+		whichOnWindows('powershell'),
 		'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
 		process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : '',
-	].filter(Boolean);
+	].filter(Boolean) as string[];
 	for (const p of psCandidates) {
 		try { if (fs.existsSync(p)) return { shell: p, prefixArgs: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command'] }; } catch { /* ignore */ }
 	}
-	// 最后兜底：null → 让 spawn 用 shell:true 默认（cmd.exe）
+
+	// 6. null → 上层退回 cmd.exe
 	return null;
 }
 
@@ -144,9 +181,12 @@ export async function bashTool(
 	if (params.background) {
 		const spawnOpts: any = {
 			cwd,
-			detached: true,
+			// Windows 下 detached 语义与 Unix 不同（会用 DETACHED_PROCESS flag），
+			// 容易造成进程泄漏（父进程死后子进程变孤儿但仍在后台跑），
+			// 所以 Windows 一律 false；unix 保留 true 以脱离进程组。
+			detached: process.platform !== 'win32',
 			stdio:    'ignore',
-			windowsHide: true,   // ⚠️ Windows 下禁止弹出黑色控制台窗口
+			windowsHide: true,
 		};
 		const child = winShell
 			? spawn(winShell.shell, [...winShell.prefixArgs, command], spawnOpts)
@@ -175,8 +215,10 @@ export async function bashTool(
 			cwd,
 			env:   { ...process.env, TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' },
 			stdio: ['ignore', 'pipe', 'pipe'],
-			detached: isDevServer,
-			windowsHide: true,   // ⚠️ 禁止 Windows 弹黑框
+			// Windows 下绝不 detached（进程泄漏风险）；dev server 的"后台存活"
+			// 靠 child.unref() 实现，而非 detached flag
+			detached: process.platform !== 'win32' && isDevServer,
+			windowsHide: true,
 		};
 		const child = winShell
 			? spawn(winShell.shell, [...winShell.prefixArgs, command], spawnOpts)
@@ -198,10 +240,19 @@ export async function bashTool(
 		const killTimer = setTimeout(() => {
 			if (completed) return;
 			timedOut = true;
-			try { child.kill('SIGTERM'); } catch { /* ignore */ }
-			setTimeout(() => {
-				try { child.kill('SIGKILL'); } catch { /* ignore */ }
-			}, 2000);
+			// Windows: child.kill 只能杀单个进程，bash/shell 启动的孙进程会变孤儿。
+			// 用 taskkill /T /F 递归杀整棵进程树（参考 OpenCode 做法）。
+			if (process.platform === 'win32' && child.pid) {
+				try {
+					const { exec } = require('node:child_process') as typeof import('node:child_process');
+					exec(`taskkill /pid ${child.pid} /T /F`, { windowsHide: true } as any, () => {});
+				} catch { /* ignore */ }
+			} else {
+				try { child.kill('SIGTERM'); } catch { /* ignore */ }
+				setTimeout(() => {
+					try { child.kill('SIGKILL'); } catch { /* ignore */ }
+				}, 2000);
+			}
 		}, timeout);
 
 		const detachAndResolve = () => {
@@ -233,7 +284,17 @@ export async function bashTool(
 			}
 			if (stdout.length > 1_000_000) {
 				stdout = stdout.slice(0, 1_000_000) + '\n[输出过大已被截断]';
-				if (!isDevServer) { try { child.kill('SIGTERM'); } catch { /* ignore */ } }
+				if (!isDevServer) {
+					// 同样用 taskkill /T /F 保证 Windows 下杀整棵树
+					if (process.platform === 'win32' && child.pid) {
+						try {
+							const { exec } = require('node:child_process') as typeof import('node:child_process');
+							exec(`taskkill /pid ${child.pid} /T /F`, { windowsHide: true } as any, () => {});
+						} catch { /* ignore */ }
+					} else {
+						try { child.kill('SIGTERM'); } catch { /* ignore */ }
+					}
+				}
 			}
 		});
 		child.stderr.on('data', (d) => {
