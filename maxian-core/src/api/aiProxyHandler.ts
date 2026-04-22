@@ -380,27 +380,31 @@ export class AiProxyHandler implements IApiHandler {
 	} {
 		const hash = this.hashString(systemPrompt);
 
-		// 检查是否与上次相同
-		if (this.lastSystemPromptHash === hash) {
-			this.systemPromptCacheHits++;
-			console.log(`[Maxian] 系统提示词缓存命中 (命中率: ${this.getPromptCacheStats().hitRate}%)`);
-			return {
-				prompt: systemPrompt,
-				cached: true,
-				hash,
-			};
+		// E. 静态段哈希跟踪（诊断 DashScope/Qwen 隐式前缀缓存命中情况）
+		// 若 __maxianLastStaticPromptLen 全局变量存在，则额外计算静态段哈希
+		const staticLen = (globalThis as any).__maxianLastStaticPromptLen as number | undefined;
+		if (typeof staticLen === 'number' && staticLen > 0 && staticLen <= systemPrompt.length) {
+			const staticHash = this.hashString(systemPrompt.slice(0, staticLen));
+			const prevStaticHash = (this as any).__lastStaticHash as string | undefined;
+			if (prevStaticHash === staticHash) {
+				console.log(`[Maxian] 静态 prompt 前缀哈希一致（${staticLen} 字符，哈希 ${staticHash.slice(0, 8)}…）`
+					+ ` → DashScope/Qwen 隐式前缀缓存可能命中`);
+			} else {
+				console.log(`[Maxian] 静态 prompt 前缀哈希变化 ${prevStaticHash?.slice(0, 8) ?? '-'}… → ${staticHash.slice(0, 8)}…（${staticLen} 字符）`);
+				(this as any).__lastStaticHash = staticHash;
+			}
 		}
 
-		// 缓存未命中
+		// 检查是否与上次完整 prompt 相同
+		if (this.lastSystemPromptHash === hash) {
+			this.systemPromptCacheHits++;
+			console.log(`[Maxian] 完整系统提示词哈希命中 (命中率: ${this.getPromptCacheStats().hitRate}%)`);
+			return { prompt: systemPrompt, cached: true, hash };
+		}
+
 		this.systemPromptCacheMisses++;
 		this.lastSystemPromptHash = hash;
-		console.log(`[Maxian] 系统提示词缓存未命中，新哈希: ${hash}`);
-
-		return {
-			prompt: systemPrompt,
-			cached: false,
-			hash,
-		};
+		return { prompt: systemPrompt, cached: false, hash };
 	}
 
 	/**

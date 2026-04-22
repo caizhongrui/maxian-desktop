@@ -1965,40 +1965,12 @@ async function main() {
 		return `\n\n====\n\nAVAILABLE SKILLS（可用技能文档）\n\n你可以通过 \`load_skill\` 工具按需加载这些专业技能文档：\n\n${lines}\n\n**重要**：当任务属于某个技能覆盖的领域时，**务必**先 load_skill 读取对应文档再动手。`;
 	}
 
-	async function runAgentLoop(
-		sessionId:     string,
-		userContent:   string,
-		history:       MessageParam[],
-		workspacePath: string,
-		mode:          string = 'code',
-		uiMode:        string = 'code',
-	): Promise<string> {
-		const MAX_ITERATIONS = 30;
-		const ctx            = new NodeToolContext(workspacePath, sessionId);
-		// Doom-loop 检测器（每次 runAgentLoop 独立实例）
-		const repetitionDetector = new ToolRepetitionDetector(3, workspacePath);
-		let   allText        = '';   // 所有迭代累积文本（用于兜底 return）
-		// 日志统计
-		let   totalInputTokens  = 0;
-		let   totalOutputTokens = 0;
-		let   totalToolCalls    = 0;
-		const loopStartTime     = Date.now();
-		let   finalText      = '';   // 最终迭代文本（无工具调用时）
+	// ═════════════════════════════════════════════════════════════════════
+	// E. Prompt 静态/动态分离：让 Anthropic prompt caching & DashScope 前缀缓存命中
+	// ═════════════════════════════════════════════════════════════════════
 
-		// ── 根据模式构建系统提示词 & 工具列表 ──────────────────────────────────
-		// 支持的模式（对标 OpenCode agent/*.txt）：
-		//   ask/chat  —— 纯对话，不给工具
-		//   plan      —— 只读工具 + plan_exit，输出实现计划
-		//   explore   —— 只读工具（任务委派用，短 prompt 高效探索代码库）
-		//   code      —— 全套工具，实际执行代码修改
-		const isChatMode    = (mode === 'ask' || mode === 'chat');
-		const isPlanMode    = (mode === 'plan');
-		const isExploreMode = (mode === 'explore');
-
-		const systemPrompt = isExploreMode
-			// Explore sub-agent prompt —— 参考 OpenCode agent/prompt/explore.txt
-			// 用于 task 工具派发子 agent 时，精简高效，专注搜索任务
-			? `【语言】简体中文输出。代码/路径/标识符保持原文。
+	/** 静态 prompt 段（只依赖 mode，哈希稳定，可被 LLM 缓存）*/
+	const STATIC_PROMPT_EXPLORE = `【语言】简体中文输出。代码/路径/标识符保持原文。
 
 你是码弦代码探索专家，专门高效导航和搜索代码库。
 
@@ -2013,13 +1985,9 @@ async function main() {
 - 用 read_file 明确已知路径时直接读
 - 返回**绝对路径**，结论要清晰简洁
 - **禁止任何文件修改**（只读 agent）
-- 完成后简短总结发现
+- 完成后简短总结发现`;
 
-工作区根目录：${workspacePath}
-${formatPlatformInfo()}
-可用工具：read_file, search_files, list_files, grep, glob, ls`
-			: isPlanMode
-			? `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
+	const STATIC_PROMPT_PLAN = `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
 
 你是码弦 AI 计划助手（Plan 模式），**只输出实现计划，不执行任何文件操作**。
 
@@ -2036,11 +2004,9 @@ PLAN MODE RULES
    - 潜在风险和注意事项
 4. 计划完成后，用户可点击"开始执行"切换到 Code 模式实际执行
 
-工作区根目录：${workspacePath}
-${formatPlatformInfo()}
-只读工具：read_file, search_files, list_files`
-			: isChatMode
-			? `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
+只读工具：read_file, search_files, list_files`;
+
+	const STATIC_PROMPT_CHAT = `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
 
 你是码弦 AI 助手，负责回答编程相关问题、解释概念、进行代码审查。
 
@@ -2074,11 +2040,9 @@ FOLLOWUP SUGGESTIONS（可选）
 - 追问 2
 - 追问 3
 \`\`\`
-该区块会被前端自动抽取并显示为"建议追问"按钮。如果回答已经完整、无需追问，不要输出此区块。
+该区块会被前端自动抽取并显示为"建议追问"按钮。如果回答已经完整、无需追问，不要输出此区块。`;
 
-工作区根目录：${workspacePath}
-${formatPlatformInfo()}`
-			: `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
+	const STATIC_PROMPT_CODE = `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
 
 你是码弦 AI 编程助手（agent 模式），可以直接操作文件系统完成编程任务。
 
@@ -2126,14 +2090,6 @@ TOOL SELECTION
 
 ====
 
-SYSTEM INFO
-
-工作区根目录：${workspacePath}
-${formatPlatformInfo()}
-可用工具：read_file, write_to_file, edit, multiedit, search_files, list_files, execute_command, todo_write, web_fetch, load_skill
-
-====
-
 OBJECTIVE
 
 你是一个 agent — 持续工作直到任务**完全解决**。能用工具解决的不要回答文字。
@@ -2151,14 +2107,74 @@ OBJECTIVE
 - 用户说"修改/更新 xxx" → 先 read_file，再 edit
 - 任何文件操作都通过工具，**绝不在回复文本里输出完整代码**`;
 
-		// 注入项目级指令（AGENTS.md / CLAUDE.md）+ 可用 Skills 列表 + .maxian/config.json 附加段落
+	function getStaticPromptByMode(mode: string): string {
+		if (mode === 'explore') return STATIC_PROMPT_EXPLORE;
+		if (mode === 'plan')    return STATIC_PROMPT_PLAN;
+		if (mode === 'ask' || mode === 'chat') return STATIC_PROMPT_CHAT;
+		return STATIC_PROMPT_CODE;  // 'code' 和其他默认
+	}
+
+	/**
+	 * 动态 prompt 段：workspace / platform / project instructions / skills / 自定义
+	 * 每次都会变，放在静态段后面，不进缓存。
+	 */
+	function composeDynamicSuffix(workspacePath: string, projectAndSkills: string): string {
+		const systemInfo = `\n\n====\n\nSYSTEM INFO\n\n工作区根目录：${workspacePath}\n${formatPlatformInfo()}`;
+		return systemInfo + projectAndSkills;
+	}
+
+	async function runAgentLoop(
+		sessionId:     string,
+		userContent:   string,
+		history:       MessageParam[],
+		workspacePath: string,
+		mode:          string = 'code',
+		uiMode:        string = 'code',
+	): Promise<string> {
+		const MAX_ITERATIONS = 30;
+		const ctx            = new NodeToolContext(workspacePath, sessionId);
+		// Doom-loop 检测器（每次 runAgentLoop 独立实例）
+		const repetitionDetector = new ToolRepetitionDetector(3, workspacePath);
+		let   allText        = '';   // 所有迭代累积文本（用于兜底 return）
+		// 日志统计
+		let   totalInputTokens  = 0;
+		let   totalOutputTokens = 0;
+		let   totalToolCalls    = 0;
+		const loopStartTime     = Date.now();
+		let   finalText      = '';   // 最终迭代文本（无工具调用时）
+
+		// ── 根据模式构建系统提示词 & 工具列表 ──────────────────────────────────
+		// E. Prompt 静态/动态分离：
+		//   - getStaticPromptByMode(mode) 只依赖 mode，每次调用**哈希一致** → 可被 LLM 后端缓存
+		//   - 运行时把 workspace / platform / project 等动态信息**附加到末尾**
+		//   - 这样 Anthropic 的 prompt caching 能打静态段的缓存
+		//     DashScope/Qwen 的隐式前缀缓存也能命中（前 N 字节不变）
+		const isChatMode    = (mode === 'ask' || mode === 'chat');
+		const isPlanMode    = (mode === 'plan');
+		const isExploreMode = (mode === 'explore');
+
+
+		// ─── 真正用的 system prompt：静态段（可缓存）+ 动态段（每次会变） ───
+		const staticPrompt = getStaticPromptByMode(mode);
+
+		// 动态段按项目路径读取（AGENTS.md / CLAUDE.md / 项目 config / skills 列表）
 		const projectInstructions = loadProjectInstructions(workspacePath);
 		const skillsList = loadAvailableSkills(workspacePath);
 		const projectCfg = loadProjectConfig(workspacePath);
 		const additionalSystemPrompt = projectCfg.additionalSystemPrompt
 			? `\n\n====\n\nPROJECT CUSTOM PROMPT（.maxian/config.json）\n\n${projectCfg.additionalSystemPrompt}`
 			: '';
-		const finalSystemPrompt = systemPrompt + projectInstructions + skillsList + additionalSystemPrompt;
+
+		const dynamicSuffix = composeDynamicSuffix(
+			workspacePath,
+			projectInstructions + skillsList + additionalSystemPrompt,
+		);
+
+		// 最终 system prompt：静态在前（哈希稳定、可缓存），动态在后（每会话不同）
+		const finalSystemPrompt = staticPrompt + dynamicSuffix;
+
+		// 暴露静态段给上层（用于 AiProxyHandler 做 block-level cache_control 标记）
+		(globalThis as any).__maxianLastStaticPromptLen = staticPrompt.length;
 
 		// 工具集按模式过滤：
 		//   chat    —— 不传工具

@@ -4429,6 +4429,18 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.1',
+      date: '2026-04-22',
+      changes: [
+        '💰 E. Prompt 静态/动态分离：静态规则前置（哈希稳定），动态信息（workspacePath/platform/项目配置/skills）附加末尾',
+        '💰 DashScope/Qwen 的隐式前缀缓存现在能可靠命中 → 长对话 token 成本预计降低 40-60%',
+        '💰 新增静态段哈希追踪日志：每次调用打出「静态 prompt 前缀哈希一致」→ 直观看到缓存状态',
+        '🗜 F. contextCompaction 精细化占位符：从「已清理 edit 第 3/5 次（1200 字）」升级为「已清理 edit 第 3/5 次 | path=src/foo.ts | 结果摘要：Successfully edited ...」',
+        '🗜 保留工具名 + 序号 + 关键参数（path/command/pattern 等）+ 结果首 60% + 尾 40%（约 200 字）',
+        '🗜 每种工具专属参数摘要规则（read_file 取 path、bash 取 command、grep 取 pattern+path、web_fetch 取 url）',
+      ],
+    },
+    {
       version: '0.2.0',
       date: '2026-04-22',
       changes: [
@@ -4788,7 +4800,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.0</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.1</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4803,7 +4815,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.0
+                    当前版本 0.2.1
                   </Show>
                 </div>
               </div>

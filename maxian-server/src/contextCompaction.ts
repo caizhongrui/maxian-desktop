@@ -105,9 +105,82 @@ function getKeepCount(toolName: string): number {
 		: TOOL_KEEP_DEFAULT;
 }
 
-/** 生成工具结果占位符 */
-function makePlaceholder(toolName: string, originalLen: number, idx: number, total: number): string {
-	return `[已清理：${toolName} 第 ${idx + 1}/${total} 次调用的结果（约 ${originalLen} 字）—— 为节省上下文已压缩，如需详情请重新执行]`;
+/**
+ * 从工具参数中提取关键摘要（让 AI 在占位符里仍能认出"这是干什么的那次"）
+ * 对每种工具给出最有辨识度的字段（path / command / pattern 等）
+ */
+function summarizeToolInput(toolName: string, input: unknown): string {
+	if (!input || typeof input !== 'object') return '';
+	const inp = input as Record<string, any>;
+	const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n) + '…' : s;
+	switch (toolName) {
+		case 'read_file':
+		case 'write_to_file':
+		case 'edit':
+		case 'multiedit':
+		case 'apply_patch':
+		case 'list_files':
+		case 'ls':
+			return inp.path ? `path=${truncate(String(inp.path), 80)}` : '';
+		case 'bash':
+		case 'execute_command':
+			return inp.command ? `cmd=${truncate(String(inp.command), 80)}` : '';
+		case 'grep':
+		case 'search_files':
+			return [
+				inp.pattern ? `pattern=${truncate(String(inp.pattern), 40)}` : '',
+				inp.path ? `path=${truncate(String(inp.path), 40)}` : '',
+			].filter(Boolean).join(' ');
+		case 'glob':
+			return inp.pattern ? `pattern=${truncate(String(inp.pattern), 60)}` : '';
+		case 'web_fetch':
+			return inp.url ? `url=${truncate(String(inp.url), 60)}` : '';
+		case 'lsp':
+			return inp.operation ? `op=${String(inp.operation)}${inp.file ? ` file=${truncate(String(inp.file), 40)}` : ''}` : '';
+		case 'load_skill':
+			return inp.skill_name ? `skill=${String(inp.skill_name)}` : '';
+		case 'todo_write':
+			return Array.isArray(inp.todos) ? `${inp.todos.length} 条` : '';
+		case 'task':
+			return inp.subagentType ? `type=${String(inp.subagentType)}` : '';
+		default:
+			return '';
+	}
+}
+
+/**
+ * 从 tool_result 内容中提取首尾行（判断成功/失败 + 主要结论）
+ * 如果结果较短直接全保留；较长则取前 N 字 + 后 M 字
+ */
+function summarizeToolResult(result: string, maxChars: number = 200): string {
+	if (!result) return '';
+	if (result.length <= maxChars) return result;
+	const head = result.slice(0, Math.floor(maxChars * 0.6));
+	const tail = result.slice(-Math.floor(maxChars * 0.4));
+	return `${head}\n... [中间 ${result.length - maxChars} 字省略] ...\n${tail}`;
+}
+
+/**
+ * 生成精细化工具结果占位符（F 阶段升级）：
+ *   旧：[已清理：edit 第 3/5 次调用的结果（约 1200 字）]
+ *   新：[已清理 edit 第 3/5 次 | path=src/foo.ts | 结果摘要：Successfully edited ...]
+ *
+ * 保留工具名 + 序号 + 关键参数 + 结果首尾 → AI 切换上下文后仍能判断之前做过什么
+ */
+function makePlaceholder(
+	toolName: string,
+	idx: number,
+	total: number,
+	toolInput: unknown,
+	origResult: string,
+): string {
+	const paramSummary = summarizeToolInput(toolName, toolInput);
+	const resultSummary = summarizeToolResult(origResult, 200);
+	const parts = [
+		`已清理 ${toolName} 第 ${idx + 1}/${total} 次`,
+		paramSummary,
+	].filter(Boolean).join(' | ');
+	return `[${parts}]\n结果摘要（原 ${origResult.length} 字）：${resultSummary}`;
 }
 
 // ─── Level 1：按类型剪枝 ─────────────────────────────────────────────────
@@ -194,16 +267,27 @@ export function pruneByToolType(
 			if (block.type !== 'tool_result') return block;
 			if (!toPrune.has(block.tool_use_id)) return block;
 
-			// 计算占位符
+			// 计算占位符（F：保留工具名 + 序号 + 参数摘要 + 结果首尾）
 			const toolEntry = allToolUses.find(e => e.toolUseId === block.tool_use_id);
 			const toolName = toolEntry?.toolName ?? 'unknown';
 			const toolInstances = byTool.get(toolName) ?? [];
 			const rank = toolInstances.findIndex(e => e.toolUseId === block.tool_use_id);
-			const originalLen = typeof block.content === 'string' ? block.content.length : JSON.stringify(block.content).length;
+			// 取原 tool_use 的 input（保留参数上下文）
+			let toolInput: unknown = undefined;
+			if (toolEntry) {
+				const uMsg = history[toolEntry.msgIdx];
+				if (uMsg && Array.isArray(uMsg.content)) {
+					const ub: any = (uMsg.content as any[])[toolEntry.blockIdx];
+					toolInput = ub?.input;
+				}
+			}
+			const origResult = typeof block.content === 'string'
+				? block.content
+				: JSON.stringify(block.content);
 			prunedCount++;
 			return {
 				...block,
-				content: makePlaceholder(toolName, originalLen, rank, toolInstances.length),
+				content: makePlaceholder(toolName, rank, toolInstances.length, toolInput, origResult),
 			};
 		});
 		return { ...msg, content: newContent };
