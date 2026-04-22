@@ -1159,7 +1159,17 @@ export default function App() {
       setCurrentUser(userInfo)
       await bootWithCredentials(creds)
     } catch (e: any) {
-      setLoginError(e?.message || "登录失败，请重试")
+      // 暴露真实错误原因（而不是固定的"登录失败"fallback），便于用户自查
+      const raw = e?.message ?? String(e ?? '')
+      let msg = raw || "登录失败，请重试"
+      // 识别常见 Tauri plugin-http 权限拒绝的错误特征
+      if (/not allowed|scope|permission|http\.fetch/i.test(raw)) {
+        msg = `服务器地址未被放行：${apiUrl}\n原始错误：${raw}`
+      } else if (/network|fetch|failed to fetch|unable to connect|ENETUNREACH|ECONNREFUSED/i.test(raw)) {
+        msg = `无法连接到 ${apiUrl}\n原始错误：${raw}`
+      }
+      setLoginError(msg)
+      console.error('[login] failed:', e)
     } finally {
       setLoginLoading(false)
     }
