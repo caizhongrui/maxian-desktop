@@ -98,11 +98,10 @@ jobs:
         run: node scripts/sync-sidecar.mjs ${{ matrix.platform.sidecar }}
 
       # ── Tauri Build（含 beforeBuildCommand: vite build） ───────
+      # 注：updater 签名暂未启用（createUpdaterArtifacts=false），
+      # 需要自动更新时再配 TAURI_SIGNING_PRIVATE_KEY / PASSWORD 两个 secrets
       - name: Tauri Build
         working-directory: maxian-desktop
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.platform.rustTarget }}
 
       # ── macOS: 手工 hdiutil 生成 DMG（绕开 create-dmg 中文 bug） ─
@@ -134,23 +133,20 @@ jobs:
             |------|------|
             | macOS (Apple Silicon) | `.dmg` `aarch64` |
             | macOS (Intel) | `.dmg` `x64` |
-            | Windows x64 | `.msi` 或 `.exe` (NSIS) |
+            | Windows x64 | `.exe` (NSIS installer) |
             | Linux x64 | `.AppImage` / `.deb` / `.rpm` |
 
             ### 安装说明
             - **macOS**：双击 `.dmg`，把 `码弦Desktop.app` 拖进 Applications。首次启动若提示"未验证的开发者"，右键图标选"打开"。
-            - **Windows**：双击 `.exe` (NSIS setup) 或 `.msi`。
+            - **Windows**：双击 `.exe` (NSIS setup) 按提示安装。
             - **Linux**：`.AppImage` 加可执行权限即可运行；`.deb` 用 `dpkg -i` 安装。
 
             全部安装包**无需单独安装 Node.js**（maxian-server 已内嵌为 sidecar）。
           files: |
             maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/dmg/*.dmg
-            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/msi/*.msi
             maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/nsis/*.exe
             maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/deb/*.deb
             maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/rpm/*.rpm
             maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/appimage/*.AppImage
-            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/macos/*.app.tar.gz
-            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/macos/*.app.tar.gz.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
