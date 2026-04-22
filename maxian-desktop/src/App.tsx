@@ -4429,6 +4429,17 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.2',
+      date: '2026-04-22',
+      changes: [
+        '🛑 修复：点"结束"按钮后任务不停止 —— cancelTask 只设了内部 flag，agent loop 从不检查',
+        '🛑 runAgentLoop 三处检查点：每轮迭代开始前、LLM 流式输出每一块、工具执行前',
+        '🛑 流中取消时调用 AiProxyHandler.stopCurrentRequest() 立即 AbortController 中止 HTTP 请求',
+        '🛑 cancelTask 同时唤醒挂起的 question / plan_exit / approval 对话框（不然会一直 await）',
+        '🔁 runAgentLoop 开头自动 reset cancelled 标志，避免上次任务的 cancel 状态影响新任务启动',
+      ],
+    },
+    {
       version: '0.2.1',
       date: '2026-04-22',
       changes: [
@@ -4800,7 +4811,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.1</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.2</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4815,7 +4826,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.1
+                    当前版本 0.2.2
                   </Show>
                 </div>
               </div>

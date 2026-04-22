@@ -2132,6 +2132,8 @@ OBJECTIVE
 		uiMode:        string = 'code',
 	): Promise<string> {
 		const MAX_ITERATIONS = 30;
+		// 清掉上次遗留的取消标记（这次是新任务启动，不该继承上次的 cancel 状态）
+		server.sessionManager.resetCancelled(sessionId);
 		const ctx            = new NodeToolContext(workspacePath, sessionId);
 		// Doom-loop 检测器（每次 runAgentLoop 独立实例）
 		const repetitionDetector = new ToolRepetitionDetector(3, workspacePath);
@@ -2196,6 +2198,16 @@ OBJECTIVE
 					: AGENT_TOOL_DEFINITIONS;
 
 		for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+			// ── 取消检查：每轮开始前检查用户是否点了"结束" ──
+			if (server.sessionManager.isCancelled(sessionId)) {
+				console.log(`[Agent] 检测到取消信号（iter=${iter}），中止 agent loop`);
+				await server.sessionManager.emitEvent(sessionId, {
+					type: 'assistant_message', sessionId,
+					content: '\n\n[已按用户请求中止任务]',
+					isPartial: false,
+				});
+				break;
+			}
 			// ── 获取 AI handler（按 uiMode 决定 businessCode） ──
 			const handler = getAiHandler(uiMode);
 
@@ -2307,6 +2319,13 @@ OBJECTIVE
 
 			try {
 				for await (const chunk of handler.createMessage(finalSystemPrompt, history, activeTools)) {
+					// LLM 流式输出中每一块都检查一次取消（让"结束"按钮秒级生效）
+					if (server.sessionManager.isCancelled(sessionId)) {
+						console.log(`[Agent] LLM 流中检测到取消，中止当前 request`);
+						try { await (handler as any).stopCurrentRequest?.(); } catch {}
+						aiError = '[用户取消]';
+						break;
+					}
 					if (chunk.type === 'text') {
 						iterText += chunk.text;
 						allText  += chunk.text;
@@ -2426,6 +2445,11 @@ OBJECTIVE
 					aiError = null;
 					try {
 						for await (const chunk of handler.createMessage(finalSystemPrompt, history, activeTools)) {
+							if (server.sessionManager.isCancelled(sessionId)) {
+								try { await (handler as any).stopCurrentRequest?.(); } catch {}
+								aiError = '[用户取消]';
+								break;
+							}
 							if (chunk.type === 'text') {
 								iterText += chunk.text;
 								allText  += chunk.text;
@@ -2678,6 +2702,12 @@ OBJECTIVE
 				});
 				return { id: tc.id, name: tc.name, success, result };
 			};
+
+			// 工具执行前再检查一次取消
+			if (server.sessionManager.isCancelled(sessionId)) {
+				console.log(`[Agent] 工具执行前检测到取消，跳过 ${toolCalls.length} 个工具`);
+				break;
+			}
 
 			// 三层调度策略（对标 OpenCode 但更保守）：
 			//   1. 只读工具 → 全部并行（read/grep/glob/ls/lsp/web_fetch/load_skill 等）

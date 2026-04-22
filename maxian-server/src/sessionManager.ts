@@ -642,6 +642,22 @@ export class SessionManager {
 		if (rt) {
 			rt.cancelled = true;
 		}
+		// 唤醒挂起的 question / plan_exit（否则 agent loop 会一直 await 这些 Promise）
+		if (rt?.pendingQuestion) {
+			try { rt.pendingQuestion.resolve({ answer: '', cancelled: true }); } catch {}
+			rt.pendingQuestion = undefined;
+		}
+		if (rt?.pendingPlanExit) {
+			try { rt.pendingPlanExit.resolve({ approved: false, feedback: '任务被取消' }); } catch {}
+			rt.pendingPlanExit = undefined;
+		}
+		// 唤醒所有挂起的 approval（被拒绝处理）
+		if (rt) {
+			for (const [, pend] of rt.pendingApprovals) {
+				try { pend.resolve(false, '任务已取消'); } catch {}
+			}
+			rt.pendingApprovals.clear();
+		}
 		const db = getDb();
 		db.prepare("UPDATE sessions SET status = 'idle', updated_at = ? WHERE id = ?").run(Date.now(), id);
 
@@ -650,6 +666,17 @@ export class SessionManager {
 				console.error('[SessionManager] cancel handler error:', err);
 			}
 		}
+	}
+
+	/** Agent loop 在关键节点调用，轮询检查是否被取消 */
+	isCancelled(id: string): boolean {
+		return this.getRuntime(id)?.cancelled === true;
+	}
+
+	/** Agent loop 在开始新任务时清掉上次的 cancelled 标记 */
+	resetCancelled(id: string): void {
+		const rt = this.getRuntime(id);
+		if (rt) rt.cancelled = false;
 	}
 
 	async approveToolCall(id: string, opts: ApproveOptions): Promise<void> {
