@@ -79,6 +79,14 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      # ── 先 build workspace 依赖（core/sdk），否则 server 找不到 ─
+      # 它们的 main/types 指向 dist/，必须先跑 tsc
+      - name: Build @maxian/core
+        run: pnpm --filter @maxian/core run build
+
+      - name: Build @maxian/sdk
+        run: pnpm --filter @maxian/sdk run build
+
       # ── 编译 maxian-server 单文件 sidecar ─────────────────────
       - name: Build sidecar binary
         working-directory: maxian-server
