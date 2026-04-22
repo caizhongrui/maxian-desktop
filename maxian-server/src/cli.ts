@@ -2979,8 +2979,52 @@ OBJECTIVE
 	console.log(`maxian server listening on ${readyInfo.url}`);
 	console.log(`__MAXIAN_READY__ ${JSON.stringify(readyInfo)}`);
 
-	process.on('SIGINT',  async () => { stopHeartbeat(); await listener.stop(true); process.exit(0); });
-	process.on('SIGTERM', async () => { stopHeartbeat(); await listener.stop(true); process.exit(0); });
+	// 优雅关闭：收到 SIGINT / SIGTERM 时：
+	//   1. 停心跳
+	//   2. 关 Hono HTTP listener（有 2 秒超时，否则 SSE 长连会一直挂住）
+	//   3. process.exit(0)
+	// 3 秒硬超时兜底：即便 step 2 卡住也强制退出，保证端口释放
+	let shuttingDown = false;
+	const gracefulShutdown = async (signal: string) => {
+		if (shuttingDown) return;
+		shuttingDown = true;
+		console.log(`[Maxian Server] 收到 ${signal}，正在优雅关闭…`);
+		try { stopHeartbeat(); } catch { /* ignore */ }
+
+		// 3 秒硬超时：保证进程一定退出，释放端口
+		const hardKill = setTimeout(() => {
+			console.warn('[Maxian Server] 优雅关闭超时 3 秒，强制 exit');
+			process.exit(0);
+		}, 3000);
+		hardKill.unref();
+
+		try {
+			// 2 秒内 listener 必须关闭；超时就直接进下一步（不等 SSE 连接）
+			await Promise.race([
+				listener.stop(false),   // false = 不等 in-flight 请求完成，直接 close 监听 socket
+				new Promise<void>((_, reject) => setTimeout(() => reject(new Error('stop timeout')), 2000)),
+			]);
+			console.log('[Maxian Server] Hono listener 已关闭，端口已释放');
+		} catch (e) {
+			console.warn('[Maxian Server] listener 关闭超时或失败，将强制退出:', (e as Error).message);
+		}
+
+		// 尝试关数据库（可选，失败不阻塞退出）
+		try {
+			const { getDb } = await import('./database.js');
+			getDb().close();
+		} catch { /* ignore */ }
+
+		clearTimeout(hardKill);
+		process.exit(0);
+	};
+
+	process.on('SIGINT',  () => void gracefulShutdown('SIGINT'));
+	process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+
+	// Windows 不支持 SIGTERM，但 CommandChild.kill() 会发 SIGBREAK 或直接结束进程
+	// 补加一个 beforeExit 兜底，也能触发端口释放
+	process.on('beforeExit', () => { if (!shuttingDown) void gracefulShutdown('beforeExit'); });
 }
 
 main().catch((err) => {

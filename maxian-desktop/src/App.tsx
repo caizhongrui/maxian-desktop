@@ -4429,6 +4429,18 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.3',
+      date: '2026-04-22',
+      changes: [
+        '🔌 修复：关闭 app 再启动连不上服务（需手动 kill node 进程）',
+        '🔌 Tauri 主端：监听 WindowEvent::CloseRequested 关窗即 kill sidecar（原来只在 RunEvent::Exit 里 kill，关 × 根本不触发）',
+        '🔌 硬 kill 升级：Windows 用 taskkill /T /F 杀进程树，Unix 先 SIGTERM 释放端口→250ms 后 SIGKILL 保底',
+        '🔌 maxian-server 优雅关闭升级：listener.stop(false) 立即 close socket，2s 超时+3s 硬退出，保证端口一定释放',
+        '🔌 启动前端口探活：能连 /health=200 就直接复用已有 sidecar，不再重复 spawn',
+        '🔌 双重保险：CloseRequested + RunEvent::Exit 两条路径都 kill，任一触发都能杀干净',
+      ],
+    },
+    {
       version: '0.2.2',
       date: '2026-04-22',
       changes: [
@@ -4811,7 +4823,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.2</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.3</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4826,7 +4838,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.2
+                    当前版本 0.2.3
                   </Show>
                 </div>
               </div>
