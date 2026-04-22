@@ -434,11 +434,31 @@ function* MultiOccurrenceReplacer(content: string, oldString: string): Generator
 	}
 }
 
+/**
+ * 完整 9-strategy 级联（对标 OpenCode src/tool/edit.ts:636-646）
+ * 顺序从严格到宽松：
+ *   1. SimpleReplacer              精确匹配（最安全）
+ *   2. LineTrimmedReplacer         每行去掉前后空白后匹配
+ *   3. BlockAnchorReplacer         首尾行锚定 + 中间行 Levenshtein 相似度
+ *   4. WhitespaceNormalizedReplacer 任意空白字符序列视为单空格
+ *   5. IndentationFlexibleReplacer 移除公共缩进后比较（AI 生成代码常见）
+ *   6. EscapeNormalizedReplacer    处理 \n / \t 转义字符差异
+ *   7. TrimmedBoundaryReplacer     首尾多余空行容错
+ *   8. ContextAwareReplacer        首尾锚 + 中间非空行 50% 相似度
+ *   9. MultiOccurrenceReplacer     所有精确匹配（replaceAll 专用）
+ *
+ * 若前一个策略唯一匹配成功 → 直接采用；多处匹配或不匹配 → 尝试下一个。
+ */
 const SAFE_REPLACERS: Array<{ name: string; fn: Replacer }> = [
 	{ name: 'SimpleReplacer', fn: SimpleReplacer },
 	{ name: 'LineTrimmedReplacer', fn: LineTrimmedReplacer },
+	{ name: 'BlockAnchorReplacer', fn: BlockAnchorReplacer },
+	{ name: 'WhitespaceNormalizedReplacer', fn: WhitespaceNormalizedReplacer },
 	{ name: 'IndentationFlexibleReplacer', fn: IndentationFlexibleReplacer },
 	{ name: 'EscapeNormalizedReplacer', fn: EscapeNormalizedReplacer },
+	{ name: 'TrimmedBoundaryReplacer', fn: TrimmedBoundaryReplacer },
+	{ name: 'ContextAwareReplacer', fn: ContextAwareReplacer },
+	// MultiOccurrenceReplacer 不进级联 —— replaceAll 模式专用，fuzzyReplace 单独调
 ];
 
 /**

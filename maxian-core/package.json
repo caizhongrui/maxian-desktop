@@ -23,6 +23,10 @@
       "types": "./dist/utils/index.d.ts",
       "import": "./dist/utils/index.js"
     },
+    "./file/FileTime": {
+      "types": "./dist/file/FileTime.d.ts",
+      "import": "./dist/file/FileTime.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"

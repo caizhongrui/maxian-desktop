@@ -663,6 +663,14 @@ export async function readFileTool(
 		ctx.fileContextTracker.trackFileRead(absolutePath, 'read_tool');
 		ctx.didEditFile = true;
 
+		// FileTime：记录 mtime/size 作为后续 edit/write/multiedit 的陈旧检测基线
+		if (ctx.sessionId) {
+			try {
+				const { FileTime } = await import('../file/FileTime.js');
+				FileTime.read(ctx.sessionId, absolutePath);
+			} catch { /* FileTime 可选，不阻塞读 */ }
+		}
+
 		return formatFileContent(filePath, content, lines.length, encoding, startLine, endLine, false, isLargeFile, stat.size);
 	} catch (error) {
 		return `Error reading file: ${(error as Error).message}`;

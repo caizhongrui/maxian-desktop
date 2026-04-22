@@ -541,6 +541,17 @@ async function executeToolCall(
 					? wFilePath
 					: path.resolve(ctx.workspacePath, wFilePath);
 				const wIsNew = !fs.existsSync(wAbsPath);
+
+				// FileTime.assert：覆盖已存在的文件前，验证 AI 读过且未被外部改过
+				if (ctx.sessionId && !wIsNew) {
+					try {
+						const { FileTime } = await import('@maxian/core/file/FileTime');
+						FileTime.assert(ctx.sessionId, wAbsPath);
+					} catch (e) {
+						return `Error: ${(e as Error).message}`;
+					}
+				}
+
 				if (ctx.sessionId) saveFileSnapshot(ctx.sessionId, wAbsPath);
 				result = await writeToFileTool(ctx, params);
 				ctx.didEditFile = true;
@@ -561,8 +572,19 @@ async function executeToolCall(
 					? filePath
 					: path.resolve(ctx.workspacePath, filePath);
 
+				// FileTime.assert：修改已存在的文件前，验证 AI 读过且文件未被外部改过
+				//（新建文件场景 content === null，跳过检查）
 				let content: string | null = null;
 				try { content = fs.readFileSync(absolutePath, 'utf8'); } catch { /* 文件不存在 */ }
+
+				if (ctx.sessionId && content !== null) {
+					try {
+						const { FileTime } = await import('@maxian/core/file/FileTime');
+						FileTime.assert(ctx.sessionId, absolutePath);
+					} catch (e) {
+						return `Error: ${(e as Error).message}`;
+					}
+				}
 
 				// 【行尾符保留】检测原文件用 \r\n 还是 \n，写回时保持一致
 				const hadCRLF = content !== null && /\r\n/.test(content);
@@ -581,6 +603,13 @@ async function executeToolCall(
 					fs.writeFileSync(absolutePath, finalContent, 'utf8');
 					ctx.didEditFile = true;
 					ctx.fileContextTracker.trackFileWrite(absolutePath);
+					// FileTime：写入后刷新基线，避免后续连续 edit 误判"外部修改"
+					if (ctx.sessionId) {
+						try {
+							const { FileTime } = await import('@maxian/core/file/FileTime');
+							FileTime.read(ctx.sessionId, absolutePath);
+						} catch { /* ignore */ }
+					}
 					if (emitEvent) {
 						await emitEvent({
 							type: 'file_changed',
@@ -630,6 +659,16 @@ async function executeToolCall(
 					return `Error: 文件不存在: ${mFilePath}`;
 				}
 
+				// FileTime.assert：验证 AI 读过且文件未被外部改过
+				if (ctx.sessionId) {
+					try {
+						const { FileTime } = await import('@maxian/core/file/FileTime');
+						FileTime.assert(ctx.sessionId, mAbsPath);
+					} catch (e) {
+						return `Error: ${(e as Error).message}`;
+					}
+				}
+
 				// 快照
 				if (ctx.sessionId) saveFileSnapshot(ctx.sessionId, mAbsPath);
 
@@ -639,6 +678,12 @@ async function executeToolCall(
 					fs.writeFileSync(mAbsPath, multieditResult.finalContent, 'utf8');
 					ctx.didEditFile = true;
 					ctx.fileContextTracker.trackFileWrite(mAbsPath);
+					if (ctx.sessionId) {
+						try {
+							const { FileTime } = await import('@maxian/core/file/FileTime');
+							FileTime.read(ctx.sessionId, mAbsPath);
+						} catch { /* ignore */ }
+					}
 					if (emitEvent) {
 						await emitEvent({
 							type: 'file_changed',
@@ -1941,10 +1986,39 @@ async function main() {
 		let   finalText      = '';   // 最终迭代文本（无工具调用时）
 
 		// ── 根据模式构建系统提示词 & 工具列表 ──────────────────────────────────
-		const isChatMode = (mode === 'ask' || mode === 'chat');
-		const isPlanMode = (mode === 'plan');
+		// 支持的模式（对标 OpenCode agent/*.txt）：
+		//   ask/chat  —— 纯对话，不给工具
+		//   plan      —— 只读工具 + plan_exit，输出实现计划
+		//   explore   —— 只读工具（任务委派用，短 prompt 高效探索代码库）
+		//   code      —— 全套工具，实际执行代码修改
+		const isChatMode    = (mode === 'ask' || mode === 'chat');
+		const isPlanMode    = (mode === 'plan');
+		const isExploreMode = (mode === 'explore');
 
-		const systemPrompt = isPlanMode
+		const systemPrompt = isExploreMode
+			// Explore sub-agent prompt —— 参考 OpenCode agent/prompt/explore.txt
+			// 用于 task 工具派发子 agent 时，精简高效，专注搜索任务
+			? `【语言】简体中文输出。代码/路径/标识符保持原文。
+
+你是码弦代码探索专家，专门高效导航和搜索代码库。
+
+## 你的能力
+- 用 glob/search_files 快速按模式匹配文件
+- 用 grep 用正则搜索文件内容
+- 用 read_file 读取并分析文件内容
+
+## 执行原则
+- 用 glob 做宽泛文件模式匹配
+- 用 grep 带正则的内容搜索
+- 用 read_file 明确已知路径时直接读
+- 返回**绝对路径**，结论要清晰简洁
+- **禁止任何文件修改**（只读 agent）
+- 完成后简短总结发现
+
+工作区根目录：${workspacePath}
+${formatPlatformInfo()}
+可用工具：read_file, search_files, list_files, grep, glob, ls`
+			: isPlanMode
 			? `【语言规定】你只能用简体中文输出自然语言。所有说明、分析、总结、错误提示必须是简体中文。代码/命令/路径/标识符保持原文。
 
 你是码弦 AI 计划助手（Plan 模式），**只输出实现计划，不执行任何文件操作**。
@@ -2086,15 +2160,24 @@ OBJECTIVE
 			: '';
 		const finalSystemPrompt = systemPrompt + projectInstructions + skillsList + additionalSystemPrompt;
 
-		// Chat 模式不传工具；Plan 模式只传只读 + plan_exit；Code 模式传全套工具
+		// 工具集按模式过滤：
+		//   chat    —— 不传工具
+		//   plan    —— 只读 + plan_exit（AI 能规划不能改）
+		//   explore —— 只读（不含 plan_exit、不含 question，纯探索）
+		//   code    —— 全套
 		const READ_ONLY_TOOLS = AGENT_TOOL_DEFINITIONS.filter(t =>
 			['read_file', 'search_files', 'list_files', 'grep', 'glob', 'ls', 'lsp', 'web_fetch', 'load_skill', 'question', 'plan_exit'].includes(t.name)
 		);
+		const EXPLORE_TOOLS = AGENT_TOOL_DEFINITIONS.filter(t =>
+			['read_file', 'search_files', 'list_files', 'grep', 'glob', 'ls'].includes(t.name)
+		);
 		const activeTools = isChatMode
 			? undefined
-			: isPlanMode
-				? READ_ONLY_TOOLS
-				: AGENT_TOOL_DEFINITIONS;
+			: isExploreMode
+				? EXPLORE_TOOLS
+				: isPlanMode
+					? READ_ONLY_TOOLS
+					: AGENT_TOOL_DEFINITIONS;
 
 		for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
 			// ── 获取 AI handler（按 uiMode 决定 businessCode） ──
@@ -2580,22 +2663,56 @@ OBJECTIVE
 				return { id: tc.id, name: tc.name, success, result };
 			};
 
-			// 分离：破坏性工具串行、只读工具并行
-			const readOnlyPending: PendingTool[]  = [];
-			const serialPending:   PendingTool[]  = [];
+			// 三层调度策略（对标 OpenCode 但更保守）：
+			//   1. 只读工具 → 全部并行（read/grep/glob/ls/lsp/web_fetch/load_skill 等）
+			//   2. 有 path 的破坏性工具（edit/write/multiedit/apply_patch）
+			//      → 按 path 分组：不同文件并行，同文件串行
+			//   3. 无 path 的破坏性工具（bash/execute_command）
+			//      → 全局串行（命令可能有跨文件副作用，保守处理）
+			type ToolResult = { id: string; name: string; success: boolean; result: string };
+			const FILE_OP_TOOLS = new Set(['edit', 'write_to_file', 'multiedit', 'apply_patch']);
+
+			const readOnlyPending: PendingTool[] = [];
+			const fileOpByPath = new Map<string, PendingTool[]>();
+			const globalSerialPending: PendingTool[] = [];
+
 			for (const p of pending) {
-				if (DESTRUCTIVE_TOOLS.has(p.tc.name)) serialPending.push(p);
-				else readOnlyPending.push(p);
+				if (!DESTRUCTIVE_TOOLS.has(p.tc.name)) {
+					readOnlyPending.push(p);
+				} else if (FILE_OP_TOOLS.has(p.tc.name)) {
+					const rawPath = (p.tc.params as any)?.path;
+					if (typeof rawPath === 'string' && rawPath.length > 0) {
+						const norm = path.isAbsolute(rawPath) ? rawPath : path.resolve(ctx.workspacePath, rawPath);
+						const arr = fileOpByPath.get(norm) ?? [];
+						arr.push(p);
+						fileOpByPath.set(norm, arr);
+					} else {
+						globalSerialPending.push(p);
+					}
+				} else {
+					globalSerialPending.push(p);
+				}
 			}
 
-			// 并行执行只读工具
-			const parallelResults = readOnlyPending.length > 0
-				? await Promise.all(readOnlyPending.map(p => runOne(p)))
-				: [];
+			// 并行阶段：
+			//   - 只读工具全部扁平并行
+			//   - 每个 file path 下的多个破坏性工具组成一条串行 chain，chain 之间并行
+			const parallelChains: Promise<ToolResult[]>[] = [];
+			if (readOnlyPending.length > 0) {
+				parallelChains.push(Promise.all(readOnlyPending.map(p => runOne(p))));
+			}
+			for (const fileOps of fileOpByPath.values()) {
+				parallelChains.push((async () => {
+					const acc: ToolResult[] = [];
+					for (const p of fileOps) acc.push(await runOne(p));
+					return acc;
+				})());
+			}
+			const parallelResults: ToolResult[] = (await Promise.all(parallelChains)).flat();
 
-			// 串行执行破坏性工具（按原顺序）
-			const serialResults: Array<{ id: string; name: string; success: boolean; result: string }> = [];
-			for (const p of serialPending) {
+			// 全局串行：bash / execute_command 最后跑（避免副作用交错）
+			const serialResults: ToolResult[] = [];
+			for (const p of globalSerialPending) {
 				serialResults.push(await runOne(p));
 			}
 
@@ -2652,13 +2769,24 @@ OBJECTIVE
 			let subMode = 'ask';
 			let userContent = opts.prompt;
 			if (custom) {
-				// 自定义 agent：把 systemPrompt 作为 user 消息前置？
-				// 更干净的做法：把自定义 systemPrompt 追加到 finalSystemPrompt。
-				// 这里简单实现：在 user prompt 前置自定义提示，运行时 agent 自然继承。
+				// 自定义 agent：systemPrompt 以 user 消息前置（运行时 agent 继承）
 				userContent = `${custom.systemPrompt}\n\n---\n\n# 任务\n\n${opts.prompt}`;
-				subMode = 'code';  // 自定义 agent 默认可写（具体工具白名单未来可细化）
+				subMode = 'code';
 			} else {
-				subMode = opts.subagentType === 'build' ? 'code' : 'ask';
+				// 内置 subagent 类型映射到 mode，启用对应专用 prompt
+				switch (opts.subagentType) {
+					case 'build':
+					case 'code':
+						subMode = 'code';  break;
+					case 'explore':
+					case 'search':
+					case 'research':
+						subMode = 'explore'; break;  // 使用精简 explore prompt + 只读工具
+					case 'plan':
+						subMode = 'plan';   break;
+					default:
+						subMode = 'ask';    break;
+				}
 			}
 			const output = await runAgentLoop(
 				subId,

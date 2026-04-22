@@ -56,6 +56,14 @@ export async function writeToFileTool(
 		ctx.fileContextTracker.trackFileWrite(absolutePath, 'roo_edited');
 		ctx.didEditFile = true;
 
+		// FileTime：写入后刷新基线
+		if (ctx.sessionId) {
+			try {
+				const { FileTime } = await import('../file/FileTime.js');
+				FileTime.read(ctx.sessionId, absolutePath);
+			} catch { /* ignore */ }
+		}
+
 		const lines = content.split('\n').length;
 		const action = fileExists ? 'Updated' : 'Created';
 

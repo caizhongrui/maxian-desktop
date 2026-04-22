@@ -254,6 +254,11 @@ export class SessionManager {
 			rt.subscribers.clear();
 			this.runtimes.delete(id);
 		}
+		// FileTime 里的会话状态也清掉，避免内存泄漏
+		try {
+			const { FileTime } = await import('@maxian/core/file/FileTime');
+			FileTime.clearSession(id);
+		} catch { /* ignore */ }
 		const db = getDb();
 		// ON DELETE CASCADE 会自动删除 messages 和 history_entries
 		db.prepare('DELETE FROM sessions WHERE id = ?').run(id);

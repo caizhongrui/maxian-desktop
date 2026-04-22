@@ -4429,6 +4429,18 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.0',
+      date: '2026-04-22',
+      changes: [
+        '🎯 Edit 工具启用 9-strategy 级联匹配（对标 OpenCode）：SimpleReplacer / LineTrimmed / BlockAnchor（Levenshtein 距离）/ WhitespaceNormalized / IndentationFlexible / EscapeNormalized / TrimmedBoundary / ContextAware / MultiOccurrence',
+        '📈 编辑成功率预估提升 2-3x —— AI 生成缩进差 2 空格、混用 tab/space、多/少空行的 old_string 都能匹配成功',
+        '🛡 FileTime.assert() 文件陈旧检测：read 时记录 mtime+size，edit 前验证"必须读过"+"未被外部改过"，消除一整类"陈旧内容覆盖用户编辑"bug',
+        '⚡ 工具执行三层调度：只读工具全部并行；不同文件的破坏性工具并行，同文件串行；bash/execute_command 全局串行',
+        '🤖 Agent-specific prompts：新增 explore 子 agent 模式（精简 prompt + 只读工具集），task 工具派发 subagentType=explore 时自动启用',
+        '🧹 session 删除时自动清理 FileTime 内部状态，防止长期运行内存泄漏',
+      ],
+    },
+    {
       version: '0.1.3',
       date: '2026-04-22',
       changes: [
@@ -4776,7 +4788,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.1.5</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.0</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4791,7 +4803,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.1.5
+                    当前版本 0.2.0
                   </Show>
                 </div>
               </div>
