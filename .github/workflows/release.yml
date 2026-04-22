@@ -16,33 +16,54 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { os: macos-latest,   name: "macOS (Apple Silicon)", sidecar: "darwin-arm64", rustTarget: "aarch64-apple-darwin" }
-          - { os: macos-13,       name: "macOS (Intel)",         sidecar: "darwin-x64",   rustTarget: "x86_64-apple-darwin" }
-          - { os: windows-latest, name: "Windows x64",            sidecar: "win32-x64",    rustTarget: "x86_64-pc-windows-msvc" }
-          - { os: ubuntu-22.04,   name: "Linux x64",              sidecar: "linux-x64",    rustTarget: "x86_64-unknown-linux-gnu" }
+          - os: macos-latest
+            name: "macOS (Apple Silicon)"
+            sidecar: "darwin-arm64"
+            rustTarget: "aarch64-apple-darwin"
+            isMac: true
+          - os: macos-13
+            name: "macOS (Intel)"
+            sidecar: "darwin-x64"
+            rustTarget: "x86_64-apple-darwin"
+            isMac: true
+          - os: windows-latest
+            name: "Windows x64"
+            sidecar: "win32-x64"
+            rustTarget: "x86_64-pc-windows-msvc"
+            isMac: false
+          - os: ubuntu-22.04
+            name: "Linux x64"
+            sidecar: "linux-x64"
+            rustTarget: "x86_64-unknown-linux-gnu"
+            isMac: false
 
     steps:
       - uses: actions/checkout@v4
 
-      # ── 安装 Bun（用于编译 sidecar 单文件二进制） ─────────────
+      # ── 安装 Bun（sidecar 单文件编译器）────────────────────────
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.4"
+          bun-version: latest
 
-      # ── Node.js + pnpm（前端 + tsc build） ──────────────────
+      # ── Node.js + pnpm（pnpm 版本自动从 package.json 读取） ───
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      # ── Rust toolchain（Tauri native） ───────────────────────
+      # ── Rust toolchain ────────────────────────────────────────
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.rustTarget }}
 
-      # ── Linux 额外系统依赖 ───────────────────────────────────
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: maxian-desktop/src-tauri -> target
+          key: ${{ matrix.platform.rustTarget }}
+
+      # ── Linux 系统依赖 ─────────────────────────────────────────
       - name: Install Linux system deps
         if: matrix.platform.os == 'ubuntu-22.04'
         run: |
@@ -54,40 +75,74 @@ jobs:
             patchelf \
             libssl-dev
 
-      # ── 安装依赖 + 构建 sidecar ──────────────────────────────
+      # ── 安装 npm deps ─────────────────────────────────────────
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Build maxian-server sidecar
+      # ── 编译 maxian-server 单文件 sidecar ─────────────────────
+      - name: Build sidecar binary
         working-directory: maxian-server
-        run: |
-          pnpm run build:bin:${{ matrix.platform.sidecar }}
+        run: pnpm run build:bin:${{ matrix.platform.sidecar }}
 
-      - name: Sync sidecar to desktop
+      # ── 拷贝 sidecar 到 src-tauri/bin/ ────────────────────────
+      - name: Sync sidecar
         working-directory: maxian-desktop
         run: node scripts/sync-sidecar.mjs ${{ matrix.platform.sidecar }}
 
-      # ── Tauri Build ────────────────────────────────────────
+      # ── Tauri Build（含 beforeBuildCommand: vite build） ───────
       - name: Tauri Build
-        uses: tauri-apps/tauri-action@v0
+        working-directory: maxian-desktop
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 签名（可选，配置 secrets 后启用）
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --target ${{ matrix.platform.rustTarget }}
+
+      # ── macOS: 手工 hdiutil 生成 DMG（绕开 create-dmg 中文 bug） ─
+      - name: Create DMG (macOS only)
+        if: matrix.platform.isMac == true
+        working-directory: maxian-desktop
+        env:
+          TAURI_BUILD_TARGET: ${{ matrix.platform.rustTarget }}
+        run: node scripts/make-dmg.mjs
+
+      # ── 列出本平台产物（用于 debug + gh-release 文件匹配） ─────
+      - name: List artifacts
+        shell: bash
+        run: |
+          echo "--- bundle tree (${{ matrix.platform.rustTarget }}) ---"
+          find "maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle" -maxdepth 3 -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.tar.gz" -o -name "*.sig" \) 2>/dev/null || true
+
+      # ── 上传到 GitHub Release（draft） ──────────────────────────
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
         with:
-          projectPath: maxian-desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: "Maxian ${{ github.ref_name }}"
-          releaseBody: |
+          draft: true
+          name: "Maxian ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          body: |
             ## 📦 下载
 
-            - macOS (Apple Silicon): `.dmg`
-            - macOS (Intel): `.dmg`
-            - Windows x64: `.msi` / `.exe`
-            - Linux x64: `.AppImage` / `.deb`
+            | 平台 | 文件 |
+            |------|------|
+            | macOS (Apple Silicon) | `.dmg` `aarch64` |
+            | macOS (Intel) | `.dmg` `x64` |
+            | Windows x64 | `.msi` 或 `.exe` (NSIS) |
+            | Linux x64 | `.AppImage` / `.deb` / `.rpm` |
 
-            见下方 Assets。
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.platform.rustTarget }}
+            ### 安装说明
+            - **macOS**：双击 `.dmg`，把 `码弦Desktop.app` 拖进 Applications。首次启动若提示"未验证的开发者"，右键图标选"打开"。
+            - **Windows**：双击 `.exe` (NSIS setup) 或 `.msi`。
+            - **Linux**：`.AppImage` 加可执行权限即可运行；`.deb` 用 `dpkg -i` 安装。
+
+            全部安装包**无需单独安装 Node.js**（maxian-server 已内嵌为 sidecar）。
+          files: |
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/dmg/*.dmg
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/msi/*.msi
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/nsis/*.exe
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/deb/*.deb
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/rpm/*.rpm
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/appimage/*.AppImage
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/macos/*.app.tar.gz
+            maxian-desktop/src-tauri/target/${{ matrix.platform.rustTarget }}/release/bundle/macos/*.app.tar.gz.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

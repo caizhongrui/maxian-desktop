@@ -27,13 +27,24 @@ const tauriConf = JSON.parse(
 const productName = tauriConf.productName;
 const version = tauriConf.version;
 
-const MACOS_BUNDLE_DIR = path.join(DESKTOP_ROOT, 'src-tauri', 'target', 'release', 'bundle', 'macos');
-const DMG_DIR          = path.join(DESKTOP_ROOT, 'src-tauri', 'target', 'release', 'bundle', 'dmg');
-
-if (!existsSync(MACOS_BUNDLE_DIR)) {
-	console.error(`[make-dmg] 未找到 ${MACOS_BUNDLE_DIR}，请先运行 pnpm tauri build`);
+// CI 场景：tauri build --target X → bundle 在 target/X/release/bundle/
+// 本地场景：tauri build → bundle 在 target/release/bundle/
+// 优先用 TAURI_BUILD_TARGET 环境变量，否则按平台自动探测
+const TARGET_TRIPLE = process.env.TAURI_BUILD_TARGET
+	|| (process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin');
+const TARGET_ROOT   = path.join(DESKTOP_ROOT, 'src-tauri', 'target');
+const CANDIDATES = [
+	path.join(TARGET_ROOT, TARGET_TRIPLE, 'release', 'bundle'),  // 带 --target 的构建
+	path.join(TARGET_ROOT,                'release', 'bundle'),  // 无 --target 的构建
+];
+const bundleDir = CANDIDATES.find(p => existsSync(path.join(p, 'macos')));
+if (!bundleDir) {
+	console.error(`[make-dmg] 未找到 bundle 目录，检查过:\n  ${CANDIDATES.join('\n  ')}`);
+	console.error(`[make-dmg] 请先运行 pnpm tauri build [--target ${TARGET_TRIPLE}]`);
 	process.exit(1);
 }
+const MACOS_BUNDLE_DIR = path.join(bundleDir, 'macos');
+const DMG_DIR          = path.join(bundleDir, 'dmg');
 
 // 找 .app
 const apps = readdirSync(MACOS_BUNDLE_DIR).filter(f => f.endsWith('.app'));
@@ -43,8 +54,8 @@ if (apps.length === 0) {
 }
 const appPath = path.join(MACOS_BUNDLE_DIR, apps[0]);
 
-// arch 后缀
-const arch = process.arch === 'arm64' ? 'aarch64' : 'x64';
+// arch 后缀：从 TARGET_TRIPLE 推断（而非 process.arch，因为可能交叉编译）
+const arch = TARGET_TRIPLE.startsWith('aarch64') ? 'aarch64' : 'x64';
 mkdirSync(DMG_DIR, { recursive: true });
 const dmgName = `${productName}_${version}_${arch}.dmg`;
 const dmgPath = path.join(DMG_DIR, dmgName);
