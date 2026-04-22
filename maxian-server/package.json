@@ -1,0 +1,56 @@
+{
+  "name": "@maxian/server",
+  "version": "0.1.0",
+  "description": "码弦（Maxian）HTTP Server — 供桌面端/CLI/VSCode 扩展统一消费",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./adapter/node": {
+      "types": "./dist/adapter/node.d.ts",
+      "import": "./dist/adapter/node.js"
+    }
+  },
+  "bin": {
+    "maxian-server": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js 2>/dev/null || true",
+    "watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js",
+    "clean": "rm -rf dist bin",
+    "build:bin": "yarn build && node scripts/build-bin.mjs",
+    "build:bin:darwin-arm64": "yarn build && node scripts/build-bin.mjs darwin-arm64",
+    "build:bin:darwin-x64":   "yarn build && node scripts/build-bin.mjs darwin-x64",
+    "build:bin:win32-x64":    "yarn build && node scripts/build-bin.mjs win32-x64",
+    "build:bin:linux-x64":    "yarn build && node scripts/build-bin.mjs linux-x64"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@hono/node-ws": "^1.0.0",
+    "@hono/zod-validator": "^0.4.2",
+    "@lydell/node-pty": "catalog:",
+    "@maxian/core": "workspace:*",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.9.0",
+    "hono": "^4.10.0",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-languageserver-types": "^3.17.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

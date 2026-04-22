@@ -1,0 +1,93 @@
+name: Release (all platforms)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: macos-latest,   name: "macOS (Apple Silicon)", sidecar: "darwin-arm64", rustTarget: "aarch64-apple-darwin" }
+          - { os: macos-13,       name: "macOS (Intel)",         sidecar: "darwin-x64",   rustTarget: "x86_64-apple-darwin" }
+          - { os: windows-latest, name: "Windows x64",            sidecar: "win32-x64",    rustTarget: "x86_64-pc-windows-msvc" }
+          - { os: ubuntu-22.04,   name: "Linux x64",              sidecar: "linux-x64",    rustTarget: "x86_64-unknown-linux-gnu" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── 安装 Bun（用于编译 sidecar 单文件二进制） ─────────────
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      # ── Node.js + pnpm（前端 + tsc build） ──────────────────
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # ── Rust toolchain（Tauri native） ───────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rustTarget }}
+
+      # ── Linux 额外系统依赖 ───────────────────────────────────
+      - name: Install Linux system deps
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      # ── 安装依赖 + 构建 sidecar ──────────────────────────────
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build maxian-server sidecar
+        working-directory: maxian-server
+        run: |
+          pnpm run build:bin:${{ matrix.platform.sidecar }}
+
+      - name: Sync sidecar to desktop
+        working-directory: maxian-desktop
+        run: node scripts/sync-sidecar.mjs ${{ matrix.platform.sidecar }}
+
+      # ── Tauri Build ────────────────────────────────────────
+      - name: Tauri Build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 签名（可选，配置 secrets 后启用）
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: maxian-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Maxian ${{ github.ref_name }}"
+          releaseBody: |
+            ## 📦 下载
+
+            - macOS (Apple Silicon): `.dmg`
+            - macOS (Intel): `.dmg`
+            - Windows x64: `.msi` / `.exe`
+            - Linux x64: `.AppImage` / `.deb`
+
+            见下方 Assets。
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.platform.rustTarget }}

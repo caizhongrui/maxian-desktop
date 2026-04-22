@@ -1,0 +1,178 @@
+{
+  "name": "@maxian/core",
+  "version": "0.1.0",
+  "description": "码弦（Maxian）AI Coding Agent 核心库 — IDE 与桌面客户端共享",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./interfaces": {
+      "types": "./dist/interfaces/index.d.ts",
+      "import": "./dist/interfaces/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/types/index.js"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.ts",
+      "import": "./dist/utils/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./task": {
+      "types": "./dist/task/Task.d.ts",
+      "import": "./dist/task/Task.js"
+    },
+    "./task-service": {
+      "types": "./dist/task/TaskService.d.ts",
+      "import": "./dist/task/TaskService.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts/index.d.ts",
+      "import": "./dist/prompts/index.js"
+    },
+    "./api": {
+      "types": "./dist/api/types.d.ts",
+      "import": "./dist/api/types.js"
+    },
+    "./api/qwen": {
+      "types": "./dist/api/qwenHandler.d.ts",
+      "import": "./dist/api/qwenHandler.js"
+    },
+    "./api/aiproxy": {
+      "types": "./dist/api/aiProxyHandler.d.ts",
+      "import": "./dist/api/aiProxyHandler.js"
+    },
+    "./api/dify": {
+      "types": "./dist/api/difyHandler.d.ts",
+      "import": "./dist/api/difyHandler.js"
+    },
+    "./api/factory": {
+      "types": "./dist/api/apiFactory.d.ts",
+      "import": "./dist/api/apiFactory.js"
+    },
+    "./context": {
+      "types": "./dist/context/ContextManager.d.ts",
+      "import": "./dist/context/ContextManager.js"
+    },
+    "./context/compaction": {
+      "types": "./dist/context/contextCompaction.d.ts",
+      "import": "./dist/context/contextCompaction.js"
+    },
+    "./context-tracking": {
+      "types": "./dist/context-tracking/FileContextTracker.d.ts",
+      "import": "./dist/context-tracking/FileContextTracker.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/McpHub.d.ts",
+      "import": "./dist/mcp/McpHub.js"
+    },
+    "./ignore": {
+      "types": "./dist/ignore/MaxianIgnoreController.d.ts",
+      "import": "./dist/ignore/MaxianIgnoreController.js"
+    },
+    "./protect": {
+      "types": "./dist/protect/MaxianProtectedController.d.ts",
+      "import": "./dist/protect/MaxianProtectedController.js"
+    },
+    "./checkpoints": {
+      "types": "./dist/checkpoints/index.d.ts",
+      "import": "./dist/checkpoints/index.js"
+    },
+    "./agents": {
+      "types": "./dist/agents/index.d.ts",
+      "import": "./dist/agents/index.js"
+    },
+    "./assistant-message": {
+      "types": "./dist/assistant-message/index.d.ts",
+      "import": "./dist/assistant-message/index.js"
+    },
+    "./task-persistence": {
+      "types": "./dist/task-persistence/index.d.ts",
+      "import": "./dist/task-persistence/index.js"
+    },
+    "./terminal": {
+      "types": "./dist/terminal/terminalTypes.d.ts",
+      "import": "./dist/terminal/terminalTypes.js"
+    },
+    "./focus-chain": {
+      "types": "./dist/focusChain/FocusChainManager.d.ts",
+      "import": "./dist/focusChain/FocusChainManager.js"
+    },
+    "./sliding-window": {
+      "types": "./dist/sliding-window/index.d.ts",
+      "import": "./dist/sliding-window/index.js"
+    },
+    "./condense": {
+      "types": "./dist/condense/index.d.ts",
+      "import": "./dist/condense/index.js"
+    },
+    "./lsp": {
+      "types": "./dist/lsp/lspUnifiedTool.d.ts",
+      "import": "./dist/lsp/lspUnifiedTool.js"
+    },
+    "./diff": {
+      "types": "./dist/diff/MultiSearchReplaceDiffStrategy.d.ts",
+      "import": "./dist/diff/MultiSearchReplaceDiffStrategy.js"
+    },
+    "./shared": {
+      "types": "./dist/shared/safeJsonParse.d.ts",
+      "import": "./dist/shared/safeJsonParse.js"
+    },
+    "./i18n": {
+      "types": "./dist/i18n/index.d.ts",
+      "import": "./dist/i18n/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cache": "^4.1.3",
+    "@types/proper-lockfile": "^4.1.4",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "maxian",
+    "ai",
+    "agent",
+    "coding"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "get-folder-size": "^5.0.0",
+    "ignore": "^7.0.5",
+    "node-cache": "^5.1.2",
+    "proper-lockfile": "^4.1.2",
+    "stream-json": "^2.1.0",
+    "zod": "^4.3.6"
+  }
+}

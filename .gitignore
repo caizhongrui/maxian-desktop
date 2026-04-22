@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════
+#  码弦 Maxian Monorepo — .gitignore
+# ═══════════════════════════════════════════════════════════════
+
+# ─── 排除父目录下所有无关内容 ────────────────────────────────
+# 白名单策略：先忽略一切，再显式放行 maxian-* 和配置
+/*
+!.github/
+!.gitignore
+!package.json
+!pnpm-workspace.yaml
+!pnpm-lock.yaml
+!tsconfig.base.json
+!README.md
+!LICENSE
+!maxian-core/
+!maxian-server/
+!maxian-sdk/
+!maxian-desktop/
+
+# ─── Node / pnpm ─────────────────────────────────────────────
+**/node_modules/
+**/.pnpm-store/
+**/.pnpm/
+
+# ─── TypeScript / 构建产物 ────────────────────────────────────
+**/dist/
+**/.turbo/
+**/*.tsbuildinfo
+
+# ─── Rust / Tauri ────────────────────────────────────────────
+maxian-desktop/src-tauri/target/
+maxian-desktop/src-tauri/gen/
+# Cargo.lock 入库（二进制项目需要，保证 reproducible build）
+!maxian-desktop/src-tauri/Cargo.lock
+
+# ─── Tauri sidecar 产物（由 CI 每次重新生成，不入库） ─────────
+maxian-desktop/src-tauri/bin/
+maxian-server/bin/
+
+# ─── 本地缓存 / 临时 ─────────────────────────────────────────
+**/.DS_Store
+**/Thumbs.db
+**/.vscode/*
+!**/.vscode/settings.json
+!**/.vscode/extensions.json
+**/.idea/
+**/*.swp
+**/*.swo
+**/.env
+**/.env.local
+**/.env.*.local
+
+# ─── 日志 ────────────────────────────────────────────────────
+**/*.log
+**/npm-debug.log*
+**/pnpm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# ─── 测试 / 覆盖率 ───────────────────────────────────────────
+**/coverage/
+**/.nyc_output/
+
+# ─── macOS / Windows / Linux 杂项 ────────────────────────────
+**/.Trashes
+**/ehthumbs.db
+**/desktop.ini

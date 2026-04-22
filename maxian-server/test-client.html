@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<title>Maxian Server 测试客户端</title>
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		body {
+			font-family: -apple-system, 'PingFang SC', system-ui, sans-serif;
+			background: #0d1117;
+			color: #e6edf3;
+			padding: 20px;
+			line-height: 1.5;
+		}
+		h1 { color: #ff8c00; margin-bottom: 20px; font-size: 24px; }
+		h2 { color: #58a6ff; margin: 20px 0 10px; font-size: 16px; }
+		.container { max-width: 1200px; margin: 0 auto; }
+		.config-bar {
+			background: #161b22;
+			border: 1px solid #30363d;
+			border-radius: 8px;
+			padding: 16px;
+			margin-bottom: 20px;
+			display: flex;
+			gap: 12px;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+		.config-bar input {
+			background: #0d1117;
+			border: 1px solid #30363d;
+			border-radius: 6px;
+			color: #e6edf3;
+			padding: 6px 10px;
+			font-size: 13px;
+		}
+		.config-bar input[type=text] { width: 180px; }
+		.badge {
+			display: inline-block;
+			padding: 2px 8px;
+			border-radius: 4px;
+			font-size: 12px;
+			font-weight: 600;
+		}
+		.badge.ok { background: rgba(46,160,67,0.3); color: #3fb950; }
+		.badge.err { background: rgba(248,81,73,0.3); color: #f85149; }
+		.badge.pending { background: rgba(158,158,158,0.3); color: #8b949e; }
+		.grid {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 16px;
+		}
+		.card {
+			background: #161b22;
+			border: 1px solid #30363d;
+			border-radius: 8px;
+			padding: 16px;
+		}
+		.card button {
+			background: #238636;
+			border: none;
+			color: white;
+			padding: 6px 14px;
+			border-radius: 6px;
+			cursor: pointer;
+			font-size: 13px;
+			margin-right: 6px;
+			margin-top: 8px;
+		}
+		.card button:hover { background: #2ea043; }
+		.card button.danger { background: #da3633; }
+		.card button.danger:hover { background: #f85149; }
+		.card button.secondary { background: #30363d; }
+		.log {
+			background: #010409;
+			border: 1px solid #30363d;
+			border-radius: 6px;
+			padding: 10px;
+			font-family: 'SF Mono', Monaco, Consolas, monospace;
+			font-size: 12px;
+			max-height: 300px;
+			overflow-y: auto;
+			margin-top: 10px;
+			white-space: pre-wrap;
+			word-break: break-all;
+		}
+		.log-line { padding: 2px 0; }
+		.log-line.req { color: #58a6ff; }
+		.log-line.res { color: #3fb950; }
+		.log-line.err { color: #f85149; }
+		.log-line.event { color: #d29922; }
+		.inline-input {
+			background: #0d1117;
+			border: 1px solid #30363d;
+			border-radius: 4px;
+			color: #e6edf3;
+			padding: 4px 8px;
+			font-size: 12px;
+			width: 200px;
+		}
+		#sse-events {
+			background: #0d1117;
+			border: 1px solid #30363d;
+			border-radius: 6px;
+			padding: 10px;
+			font-family: 'SF Mono', monospace;
+			font-size: 12px;
+			max-height: 200px;
+			overflow-y: auto;
+			margin-top: 8px;
+		}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<h1>🚀 Maxian Server 测试客户端</h1>
+
+		<div class="config-bar">
+			<label>Server URL：<input type="text" id="base-url" value="http://127.0.0.1:4096"></label>
+			<label>User：<input type="text" id="username" value="maxian" style="width:80px"></label>
+			<label>Pass：<input type="text" id="password" value="test123" style="width:100px"></label>
+			<span id="health-badge" class="badge pending">Not connected</span>
+			<button onclick="checkHealth()" style="background:#238636;border:none;color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer">Connect</button>
+		</div>
+
+		<div class="grid">
+			<!-- Health & Version -->
+			<div class="card">
+				<h2>🩺 Health & Version</h2>
+				<button onclick="callApi('GET', '/health', null, 'health-log')">GET /health</button>
+				<button onclick="callApi('GET', '/version', null, 'health-log')">GET /version</button>
+				<div id="health-log" class="log"></div>
+			</div>
+
+			<!-- Sessions -->
+			<div class="card">
+				<h2>💬 Sessions</h2>
+				<button onclick="callApi('GET', '/sessions', null, 'sessions-log')">List</button>
+				<button onclick="createSession()">Create</button>
+				<button class="secondary" onclick="sendMessage()">Send Message</button>
+				<button class="secondary" onclick="subscribeSSE()">Subscribe SSE</button>
+				<button class="secondary" onclick="cancelTask()">Cancel</button>
+				<button class="danger" onclick="deleteSession()">Delete</button>
+				<br>
+				<input type="text" id="session-id" class="inline-input" placeholder="Session ID" />
+				<input type="text" id="message-content" class="inline-input" placeholder="Message..." value="你好" />
+				<div id="sessions-log" class="log"></div>
+				<h2>📨 SSE Events</h2>
+				<div id="sse-events">(未订阅)</div>
+			</div>
+
+			<!-- Workspaces -->
+			<div class="card">
+				<h2>📂 Workspaces</h2>
+				<button onclick="callApi('GET', '/workspaces', null, 'workspaces-log')">List</button>
+				<button onclick="addWorkspace()">Add</button>
+				<button class="secondary" onclick="listFiles()">List Files</button>
+				<button class="danger" onclick="removeWorkspace()">Remove</button>
+				<br>
+				<input type="text" id="workspace-path" class="inline-input" placeholder="/path/to/repo" value="/tmp" />
+				<input type="text" id="workspace-id" class="inline-input" placeholder="WS ID" />
+				<div id="workspaces-log" class="log"></div>
+			</div>
+
+			<!-- Tools -->
+			<div class="card">
+				<h2>🔧 Tools</h2>
+				<button onclick="callApi('GET', '/tools', null, 'tools-log')">List Tools</button>
+				<button onclick="executeTool()">Execute Demo</button>
+				<div id="tools-log" class="log"></div>
+			</div>
+
+			<!-- Config -->
+			<div class="card">
+				<h2>⚙️ Config</h2>
+				<input type="text" id="config-key" class="inline-input" placeholder="key" value="test.key" />
+				<input type="text" id="config-value" class="inline-input" placeholder="value" value="hello" />
+				<br>
+				<button onclick="getConfig()">Get</button>
+				<button onclick="setConfig()">Set</button>
+				<div id="config-log" class="log"></div>
+			</div>
+
+			<!-- API Summary -->
+			<div class="card">
+				<h2>📊 API 测试状态</h2>
+				<div id="api-summary">
+					<div>✅ 未运行</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script>
+		const apiStats = { total: 0, ok: 0, err: 0 };
+		let currentEventSource = null;
+
+		function auth() {
+			const u = document.getElementById('username').value;
+			const p = document.getElementById('password').value;
+			if (!u || !p) return null;
+			return 'Basic ' + btoa(`${u}:${p}`);
+		}
+
+		function baseUrl() {
+			return document.getElementById('base-url').value.replace(/\/$/, '');
+		}
+
+		function appendLog(id, text, kind = 'req') {
+			const log = document.getElementById(id);
+			const line = document.createElement('div');
+			line.className = 'log-line ' + kind;
+			const time = new Date().toLocaleTimeString();
+			line.textContent = `[${time}] ${text}`;
+			log.appendChild(line);
+			log.scrollTop = log.scrollHeight;
+		}
+
+		async function callApi(method, path, body, logId) {
+			apiStats.total++;
+			const logTarget = logId || 'health-log';
+			appendLog(logTarget, `→ ${method} ${path}${body ? ' ' + JSON.stringify(body) : ''}`, 'req');
+
+			try {
+				const headers = { 'Content-Type': 'application/json' };
+				const a = auth();
+				if (a) headers['Authorization'] = a;
+
+				const res = await fetch(`${baseUrl()}${path}`, {
+					method,
+					headers,
+					body: body ? JSON.stringify(body) : undefined,
+				});
+
+				const text = await res.text();
+				let data;
+				try { data = JSON.parse(text); } catch { data = text; }
+
+				if (res.ok) {
+					apiStats.ok++;
+					appendLog(logTarget, `← ${res.status} ${JSON.stringify(data, null, 2)}`, 'res');
+				} else {
+					apiStats.err++;
+					appendLog(logTarget, `← ${res.status} ${JSON.stringify(data)}`, 'err');
+				}
+				updateSummary();
+				return data;
+			} catch (err) {
+				apiStats.err++;
+				appendLog(logTarget, `✕ ${err.message}`, 'err');
+				updateSummary();
+				return null;
+			}
+		}
+
+		function updateSummary() {
+			document.getElementById('api-summary').innerHTML = `
+				<div>总调用: <strong>${apiStats.total}</strong></div>
+				<div>成功: <strong style="color:#3fb950">${apiStats.ok}</strong></div>
+				<div>失败: <strong style="color:#f85149">${apiStats.err}</strong></div>
+			`;
+		}
+
+		async function checkHealth() {
+			const result = await callApi('GET', '/health', null, 'health-log');
+			const badge = document.getElementById('health-badge');
+			if (result && result.ok) {
+				badge.className = 'badge ok';
+				badge.textContent = `✓ v${result.version} (${Math.round(result.uptime / 1000)}s)`;
+			} else {
+				badge.className = 'badge err';
+				badge.textContent = 'Failed';
+			}
+		}
+
+		async function createSession() {
+			const res = await callApi('POST', '/sessions', {
+				title: '测试会话 ' + new Date().toLocaleTimeString(),
+				workspacePath: document.getElementById('workspace-path').value,
+				mode: 'code',
+			}, 'sessions-log');
+			if (res && res.id) {
+				document.getElementById('session-id').value = res.id;
+			}
+		}
+
+		async function sendMessage() {
+			const id = document.getElementById('session-id').value;
+			const content = document.getElementById('message-content').value;
+			if (!id || !content) return;
+			await callApi('POST', `/sessions/${id}/messages`, { content }, 'sessions-log');
+		}
+
+		async function cancelTask() {
+			const id = document.getElementById('session-id').value;
+			if (!id) return;
+			await callApi('POST', `/sessions/${id}/cancel`, null, 'sessions-log');
+		}
+
+		async function deleteSession() {
+			const id = document.getElementById('session-id').value;
+			if (!id) return;
+			if (currentEventSource) {
+				currentEventSource.close();
+				currentEventSource = null;
+			}
+			await callApi('DELETE', `/sessions/${id}`, null, 'sessions-log');
+			document.getElementById('session-id').value = '';
+		}
+
+		function subscribeSSE() {
+			const id = document.getElementById('session-id').value;
+			if (!id) return;
+			const sseEvents = document.getElementById('sse-events');
+			sseEvents.innerHTML = '';
+
+			if (currentEventSource) currentEventSource.close();
+
+			// EventSource 不能带 custom headers，所以 URL 里加 auth 参数不行
+			// 这里演示场景：建议 server 认证后端提供 token query 形式或 cookie 认证
+			// 当前 server 没配，SSE 测试只在无密码时工作
+			const url = `${baseUrl()}/sessions/${id}/events`;
+			try {
+				const es = new EventSource(url, { withCredentials: false });
+				currentEventSource = es;
+				sseEvents.innerHTML = `<div style="color:#3fb950">✓ 已订阅 ${id}</div>`;
+
+				es.onmessage = (ev) => {
+					const div = document.createElement('div');
+					div.style.color = '#d29922';
+					div.textContent = `📨 ${ev.data}`;
+					sseEvents.appendChild(div);
+					sseEvents.scrollTop = sseEvents.scrollHeight;
+				};
+				es.onerror = (e) => {
+					const div = document.createElement('div');
+					div.style.color = '#f85149';
+					div.textContent = '✕ SSE 连接错误（若 server 有认证则需要 HTTP 认证支持）';
+					sseEvents.appendChild(div);
+				};
+			} catch (err) {
+				sseEvents.innerHTML = `<div style="color:#f85149">✕ ${err.message}</div>`;
+			}
+		}
+
+		async function addWorkspace() {
+			const path = document.getElementById('workspace-path').value;
+			if (!path) return;
+			const res = await callApi('POST', '/workspaces', { path }, 'workspaces-log');
+			if (res && res.id) {
+				document.getElementById('workspace-id').value = res.id;
+			}
+		}
+
+		async function listFiles() {
+			const id = document.getElementById('workspace-id').value;
+			if (!id) return;
+			await callApi('GET', `/workspaces/${id}/files`, null, 'workspaces-log');
+		}
+
+		async function removeWorkspace() {
+			const id = document.getElementById('workspace-id').value;
+			if (!id) return;
+			await callApi('DELETE', `/workspaces/${id}`, null, 'workspaces-log');
+			document.getElementById('workspace-id').value = '';
+		}
+
+		async function executeTool() {
+			await callApi('POST', '/tools/execute', {
+				name: 'read_file',
+				params: { path: '/etc/hostname' },
+				toolUseId: 'test-1',
+			}, 'tools-log');
+		}
+
+		async function getConfig() {
+			const key = document.getElementById('config-key').value;
+			if (!key) return;
+			await callApi('GET', `/config/${encodeURIComponent(key)}`, null, 'config-log');
+		}
+
+		async function setConfig() {
+			const key = document.getElementById('config-key').value;
+			const value = document.getElementById('config-value').value;
+			if (!key) return;
+			await callApi('PUT', `/config/${encodeURIComponent(key)}`, { value }, 'config-log');
+		}
+
+		// 初始化：自动 health check
+		window.addEventListener('load', () => setTimeout(checkHealth, 300));
+	</script>
+</body>
+</html>
