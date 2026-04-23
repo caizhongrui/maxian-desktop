@@ -1458,6 +1458,27 @@ async function main() {
 	// Handler 复用池：按 (uiMode + businessCode + apiUrl) 缓存同一个实例，
 	// 避免每次请求都 new 掉跨请求的 prompt 缓存哈希/命中统计。
 	const __aiHandlerCache = new Map<string, AiProxyHandler>();
+
+	/**
+	 * 活跃 LLM 流注册表：sessionId → 当前正在 createMessage 的 handler。
+	 * 用于"思考过程中点取消"立刻 abort fetch，而不是等下一块 chunk 到达才检测。
+	 *
+	 * 写入：进入 for-await 前 set
+	 * 清除：for-await 退出（finally）
+	 * 读取：sessionManager.onCancel 注册的全局 hook → 立即调 stopCurrentRequest()
+	 */
+	const __activeStreamHandlers = new Map<string, AiProxyHandler>();
+
+	// 注册全局取消 hook：用户点 stop 时立刻 abort 当前 active handler 的 fetch
+	server.sessionManager.onCancel(async (sessionId: string) => {
+		const h = __activeStreamHandlers.get(sessionId);
+		if (h) {
+			console.log(`[Cancel] 主动 abort session ${sessionId} 的活跃 LLM 流`);
+			try { await h.stopCurrentRequest(); } catch (e) {
+				console.warn('[Cancel] stopCurrentRequest 失败:', (e as Error).message);
+			}
+		}
+	});
 	function getAiHandler(uiMode?: string): AiProxyHandler | null {
 		const defaultCode = uiMode === 'chat' ? 'IDE_CHAT_ASK' : 'IDE_CHAT_CODE';
 
@@ -2317,6 +2338,8 @@ OBJECTIVE
 				}
 			};
 
+			// 注册当前 handler，让 cancelTask 能主动 abort（不用等下一 chunk）
+			__activeStreamHandlers.set(sessionId, handler);
 			try {
 				for await (const chunk of handler.createMessage(finalSystemPrompt, history, activeTools)) {
 					// LLM 流式输出中每一块都检查一次取消（让"结束"按钮秒级生效）
@@ -2419,6 +2442,11 @@ OBJECTIVE
 				}
 			} catch (e) {
 				aiError = (e as Error).message;
+			} finally {
+				// 退出 for-await：注销 active handler，避免 onCancel 误 abort 后续请求
+				if (__activeStreamHandlers.get(sessionId) === handler) {
+					__activeStreamHandlers.delete(sessionId);
+				}
 			}
 
 			// Rate-limit 检测与自动重试（P0-6）
@@ -2443,6 +2471,8 @@ OBJECTIVE
 						type: 'rate_limit_cleared', sessionId,
 					} as any);
 					aiError = null;
+					// 重试也注册 active handler，让 cancel 期间也能 abort
+					__activeStreamHandlers.set(sessionId, handler);
 					try {
 						for await (const chunk of handler.createMessage(finalSystemPrompt, history, activeTools)) {
 							if (server.sessionManager.isCancelled(sessionId)) {
@@ -2481,6 +2511,10 @@ OBJECTIVE
 					} catch (e) {
 						aiError = (e as Error).message;
 						if (!/\b429\b|rate[\s_-]?limit|too many requests|throttl|capacity limits?/i.test(aiError)) break;
+					} finally {
+						if (__activeStreamHandlers.get(sessionId) === handler) {
+							__activeStreamHandlers.delete(sessionId);
+						}
 					}
 				}
 				if (aiError) {

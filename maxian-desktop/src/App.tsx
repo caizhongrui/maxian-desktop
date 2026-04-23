@@ -4449,6 +4449,17 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.5',
+      date: '2026-04-23',
+      changes: [
+        '🛑 修复：思考过程中点"停止"按钮无效，AI 仍继续输出',
+        '🛑 根因：原 cancel 检查只在两块 chunk 之间生效，但思考流的 chunk 可能间隔几秒（R1/QwQ 慢思考），await 阻塞期间 cancel 完全无感',
+        '🛑 新增 active handler 注册表：sessionId → 当前正在 LLM 流的 AiProxyHandler',
+        '🛑 sessionManager.onCancel 注册全局 hook：cancelTask 一触发就主动调 handler.stopCurrentRequest() → AbortController.abort() → fetch 立刻抛 AbortError → for-await 立即退出',
+        '🛑 主路径 + 限流重试路径两个 for-await 都加 register/finally 包裹，确保 abort 能命中',
+      ],
+    },
+    {
       version: '0.2.4',
       date: '2026-04-23',
       changes: [
@@ -4853,7 +4864,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.4</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.5</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4868,7 +4879,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.4
+                    当前版本 0.2.5
                   </Show>
                 </div>
               </div>
