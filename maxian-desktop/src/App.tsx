@@ -355,9 +355,9 @@ export default function App() {
   // ── Token 用量 ─────────────────────────────────────────────────────────────
   const [tokenUsed, setTokenUsed] = createSignal(0)
   // tokenLimit 由后端根据实际模型窗口上报（token_usage 事件的 limit 字段）
-  // 默认 128K（Qwen-plus / GPT-4o / Claude Sonnet 标准），后端可通过
-  // MAXIAN_CONTEXT_WINDOW 环境变量覆盖，上报给前端后实时更新
-  const [tokenLimit, setTokenLimit] = createSignal(128000)
+  // 默认 1M（Qwen3-coder-plus / Claude 1M / Qwen-max-longcontext），
+  // 后端通过 MAXIAN_CONTEXT_WINDOW 环境变量可覆盖，上报给前端后实时更新
+  const [tokenLimit, setTokenLimit] = createSignal(1_000_000)
 
   // ── Slash 命令面板 ─────────────────────────────────────────────────────────
   const [showSlash, setShowSlash] = createSignal(false)
@@ -4490,6 +4490,16 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.9',
+      date: '2026-04-23',
+      changes: [
+        '📊 默认 CONTEXT_WINDOW 调回 1M（Qwen3-coder-plus / Claude 1M / Qwen-max-longcontext 标准）',
+        '📊 L1 剪枝阈值 550K（55%），L2 总结阈值 850K（85%），跟 v0.2.0~v0.2.7 保持一致',
+        '📊 小模型用户（Qwen-plus 128K 等）设 MAXIAN_CONTEXT_WINDOW=128000 环境变量即可',
+        '💡 澄清：token_usage 的 used 字段是模型 tokenizer 真实计算结果（非估算），inputTokens = 整个对话历史 + system prompt 的真实长度',
+      ],
+    },
+    {
       version: '0.2.8',
       date: '2026-04-23',
       changes: [
@@ -4940,7 +4950,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.8</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.9</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4955,7 +4965,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.8
+                    当前版本 0.2.9
                   </Show>
                 </div>
               </div>

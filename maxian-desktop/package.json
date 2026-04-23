@@ -1,6 +1,6 @@
 {
   "name": "@maxian/desktop",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "码弦 Maxian 桌面客户端（Tauri + SolidJS）",
   "type": "module",
   "private": true,

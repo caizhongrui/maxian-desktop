@@ -20,16 +20,17 @@ import { AiProxyHandler } from '@maxian/core/api/aiproxy';
 
 // ─── 阈值配置 ─────────────────────────────────────────────────────────
 //
-// 默认目标：128K 上下文（Qwen-plus / GPT-4o / Claude Sonnet 标准）
-// 大于这个的模型通过环境变量调整：
-//   MAXIAN_CONTEXT_WINDOW=1000000       （比如 Claude 1M context）
-//   MAXIAN_COMPACT_L1_THRESHOLD=600000
-//   MAXIAN_COMPACT_L2_THRESHOLD=850000
+// 默认目标：1M 上下文（Qwen-max-longcontext / Claude 1M / Qwen3-coder-plus）
+// 更小的模型通过环境变量调整：
+//   MAXIAN_CONTEXT_WINDOW=128000        （Qwen-plus / GPT-4o / Claude Sonnet）
+//   MAXIAN_CONTEXT_WINDOW=256000        （某些中等模型）
+//   MAXIAN_COMPACT_L1_THRESHOLD=...
+//   MAXIAN_COMPACT_L2_THRESHOLD=...
 //
-// 阈值意义：
-//   L1（按类型剪枝）：~55% → 早剪防止上下文过大导致 AI 注意力涣散
-//   L2（LLM 总结）：~85% 且 L1 不够 → 激进压缩
-//   硬上限保留：~92% 给响应流（~8%）
+// 阈值意义（百分比相对于 CONTEXT_WINDOW）：
+//   L1（按类型剪枝）：55% → 早剪防止上下文过大导致 AI 注意力涣散
+//   L2（LLM 总结）：85% 且 L1 不够 → 激进压缩
+//   硬上限保留：~8% 给响应流
 const parseIntEnv = (key: string, defaultVal: number): number => {
 	const v = process.env[key];
 	if (!v) return defaultVal;
@@ -37,7 +38,7 @@ const parseIntEnv = (key: string, defaultVal: number): number => {
 	return Number.isFinite(n) && n > 0 ? n : defaultVal;
 };
 
-export const CONTEXT_WINDOW       = parseIntEnv('MAXIAN_CONTEXT_WINDOW',       128_000);
+export const CONTEXT_WINDOW       = parseIntEnv('MAXIAN_CONTEXT_WINDOW',       1_000_000);
 export const COMPACT_L1_THRESHOLD = parseIntEnv('MAXIAN_COMPACT_L1_THRESHOLD', Math.floor(CONTEXT_WINDOW * 0.55));
 export const COMPACT_L2_THRESHOLD = parseIntEnv('MAXIAN_COMPACT_L2_THRESHOLD', Math.floor(CONTEXT_WINDOW * 0.85));
 export const RESERVED_OUTPUT      = Math.floor(CONTEXT_WINDOW * 0.08);
