@@ -1607,8 +1607,40 @@ export default function App() {
   }
 
   // ─── SSE ──────────────────────────────────────────────────────────────────
+  // 任务取消时间戳：cancel 触发后，后续残留的 reasoning_delta / assistant_message
+  // / tool_input_delta 事件全部忽略，避免 UI 持续显示"已停止任务"的输出
+  let _abortedAt = 0
+
   function handleEvent(e: MaxianEvent) {
     const type = e.type as string
+
+    // task_aborted = 后端强制中止信号，立刻进入"忽略后续流"模式
+    if (type === "task_aborted") {
+      _abortedAt = Date.now()
+      console.log('[handleEvent] 收到 task_aborted，后续 200ms 内的流式事件全部忽略')
+      // 收尾所有 isPartial 消息
+      setMessages((prev) => prev.map(m => {
+        if (!m.isPartial) return m
+        if (m.role === 'tool') {
+          return { ...m, isPartial: false, toolSuccess: false, toolResult: m.toolResult || '[任务已中止]' }
+        }
+        if (m.role === 'reasoning') return { ...m, isPartial: false, charCount: m.content.length }
+        return { ...m, isPartial: false }
+      }))
+      setRateLimit({ active: false, resetAt: 0, attempt: 0, message: '' })
+      setSending(false)
+      return
+    }
+
+    // 流式事件白名单：abort 后 1.5 秒内丢弃这些（兜底防 SSE buffer 残留）
+    const STREAM_EVENTS = new Set([
+      'reasoning_delta', 'assistant_message', 'tool_input_delta', 'tool_call_start',
+      'tool_call_result', 'tool_output_chunk', 'todos_updated',
+    ])
+    if (_abortedAt > 0 && STREAM_EVENTS.has(type) && (Date.now() - _abortedAt) < 1500) {
+      return  // 静默丢弃
+    }
+
     // 文件变更事件
     if (type === "file_changed") {
       const filePath = (e as any).path as string
@@ -1994,6 +2026,7 @@ export default function App() {
     if (!sid || !content || sending()) return
     setSending(true)
     _resetRecv()  // 重置接收计数器 + 直接清空 DOM
+    _abortedAt = 0  // 新任务开始，清掉上次取消的丢弃窗口
     const imgs = attachedImages()
     const displayContent = imgs.length > 0
       ? `${content}\n\n[附图 ${imgs.length} 张]`
@@ -4449,6 +4482,18 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.6',
+      date: '2026-04-23',
+      changes: [
+        '🛑 修复：思考阶段点停止后端 AI 还在输出 —— 对照码弦 IDE 实现，前端缺少"事件硬隔离"',
+        '🛑 后端 cancelTask 触发后立刻 emit task_aborted + task_status:aborted 给前端',
+        '🛑 前端收到 task_aborted → 立刻 setSending(false)、收尾所有 isPartial 消息、清 rateLimit',
+        '🛑 全局 _abortedAt 时间戳：abort 后 1500ms 内的 reasoning_delta / assistant_message / tool_input_delta / tool_call_start / tool_call_result / tool_output_chunk / todos_updated 全部静默丢弃（防 SSE buffer 残留事件继续显示）',
+        '🛑 新任务发送时自动 reset _abortedAt=0',
+        '🛑 完整 stop 链路 = AbortController.abort() + POST /ai/proxy/stop/{id} + task_aborted 广播 + 前端事件丢弃，对照码弦 IDE 三层防线齐全',
+      ],
+    },
+    {
       version: '0.2.5',
       date: '2026-04-23',
       changes: [
@@ -4864,7 +4909,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.5</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.6</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4879,7 +4924,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.5
+                    当前版本 0.2.6
                   </Show>
                 </div>
               </div>

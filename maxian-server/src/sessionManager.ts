@@ -661,6 +661,27 @@ export class SessionManager {
 		const db = getDb();
 		db.prepare("UPDATE sessions SET status = 'idle', updated_at = ? WHERE id = ?").run(Date.now(), id);
 
+		// 立刻通知前端"任务已强制中止"，前端收到后应：
+		//   1. 把所有 isPartial 消息收尾
+		//   2. 把后续残留的 reasoning_delta / assistant_message / tool_* 事件全部忽略
+		//   （即使后端 LLM 流还有几个 chunk 在路上，UI 也不再显示）
+		try {
+			await this.emitEvent(id, {
+				type: 'task_aborted',
+				sessionId: id,
+				reason: 'user_cancelled',
+				abortedAt: Date.now(),
+			} as unknown as MaxianEvent);
+			// 同步触发 task_status:aborted（前端可能已有针对此事件的 setSending(false) 处理）
+			await this.emitEvent(id, {
+				type: 'task_status',
+				sessionId: id,
+				status: 'aborted',
+			} as unknown as MaxianEvent);
+		} catch (err) {
+			console.warn('[SessionManager] emit task_aborted 失败:', err);
+		}
+
 		for (const handler of this.onCancelHandlers) {
 			try { await handler(id); } catch (err) {
 				console.error('[SessionManager] cancel handler error:', err);
