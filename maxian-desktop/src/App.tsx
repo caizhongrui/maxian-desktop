@@ -877,6 +877,21 @@ export default function App() {
 
   let chatEndRef: HTMLDivElement | undefined
   let chatTimelineRef: HTMLDivElement | undefined
+  /** 贴底滚动跟踪：用户手动往上翻时暂停 auto-scroll；回到底部重新启用 */
+  let stickToBottom = true
+  const STICK_THRESHOLD_PX = 80
+  /** 判断当前是否离底部 < THRESHOLD（允许继续 auto-scroll） */
+  function isNearBottom(el: HTMLElement): boolean {
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < STICK_THRESHOLD_PX
+  }
+  /**
+   * 尝试滚到底。仅当 stickToBottom=true 时才执行。
+   * 用户手动往上翻后，新消息不会打断他们阅读。
+   */
+  function maybeScrollToBottom() {
+    if (!stickToBottom) return
+    requestAnimationFrame(() => chatEndRef?.scrollIntoView({ behavior: 'smooth' }))
+  }
   let textareaRef: HTMLTextAreaElement | undefined
   let unsubscribe: (() => void) | null = null
   let msgId = 0
@@ -1371,7 +1386,8 @@ export default function App() {
         setMsgHasMore(hasMore)
         setMsgOldestTs(stored[0].createdAt)
       }
-      // 滚到最新消息
+      // 切换会话：视为"刚进来想看最新"，重置贴底状态 + 直接滚底（不走 maybe）
+      stickToBottom = true
       requestAnimationFrame(() => chatEndRef?.scrollIntoView({ behavior: "instant" }))
     } catch (e) {
       console.warn("[maxian] failed to load session messages:", e)
@@ -1968,7 +1984,8 @@ export default function App() {
       setRateLimit({ active: false, resetAt: 0, attempt: 0, message: '' })
       setSending(false)
     }
-    requestAnimationFrame(() => chatEndRef?.scrollIntoView({ behavior: "smooth" }))
+    // 仅当用户在底部时才 auto-scroll（避免打断向上翻阅读）
+    maybeScrollToBottom()
   }
 
   // ─── Send ──────────────────────────────────────────────────────────────────
@@ -1982,6 +1999,9 @@ export default function App() {
       ? `${content}\n\n[附图 ${imgs.length} 张]`
       : content
     setMessages((prev) => [...prev, { id: String(++msgId), role: "user", content: displayContent, createdAt: Date.now() }])
+    // 用户主动发消息 → 视为"想看响应"，重置贴底状态让后续 auto-scroll 生效
+    stickToBottom = true
+    requestAnimationFrame(() => chatEndRef?.scrollIntoView({ behavior: 'instant' }))
     pushPromptHistory(content)
     setInput("")
     setAttachedImages([])
@@ -4429,6 +4449,16 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.4',
+      date: '2026-04-23',
+      changes: [
+        '📜 修复：向上翻聊天历史时，新任务的流式消息会强制把页面滚回底部，打断阅读',
+        '📜 新增 stickToBottom 跟踪：仅当用户在底部 80px 内时才自动滚到底，否则保持当前阅读位置',
+        '📜 切换会话 / 用户主动发消息 → 重置 stickToBottom=true，下次消息自动滚底（符合预期）',
+        '📜 SSE 事件处理路径改用 maybeScrollToBottom()，不再无条件 scrollIntoView',
+      ],
+    },
+    {
       version: '0.2.3',
       date: '2026-04-22',
       changes: [
@@ -4823,7 +4853,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.3</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.4</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4838,7 +4868,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.3
+                    当前版本 0.2.4
                   </Show>
                 </div>
               </div>
@@ -7768,10 +7798,13 @@ export default {
                   class="chat-timeline"
                   ref={chatTimelineRef}
                   onScroll={(e) => {
+                    const el = e.currentTarget
                     // 滚到顶部 80px 内时触发加载更多
-                    if (e.currentTarget.scrollTop < 80 && msgHasMore() && !msgLoadingMore()) {
+                    if (el.scrollTop < 80 && msgHasMore() && !msgLoadingMore()) {
                       void loadMoreMessages()
                     }
+                    // 贴底跟踪：用户近底 → 保持 auto-scroll；离底 → 暂停（不打断阅读）
+                    stickToBottom = isNearBottom(el)
                   }}
                   onClick={(e) => {
                     const target = e.target as HTMLElement
