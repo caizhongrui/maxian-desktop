@@ -80,7 +80,7 @@ import type {
 } from '@maxian/core/tools';
 import { LSP } from './lsp/index.js';
 import { loadAllPlugins, triggerPluginHook, type PluginToolDef, type LoadedPlugin } from './pluginLoader.js';
-import { compactIfNeeded, forceCompact } from './contextCompaction.js';
+import { compactIfNeeded, forceCompact, CONTEXT_WINDOW } from './contextCompaction.js';
 import { loadProjectConfig, loadCustomAgents, loadCustomCommands } from './projectConfig.js';
 import type { IToolContext } from '@maxian/core/tools';
 import type {
@@ -2233,7 +2233,9 @@ OBJECTIVE
 			const handler = getAiHandler(uiMode);
 
 			// ── 上下文压缩检查（每轮开始时）─────────────────────────────
-			// 1M 上下文模型，>60% 触发按工具类型剪枝，>85% 触发 LLM 总结
+			// 默认 128K 窗口：>55% 触发按工具类型剪枝，>85% 触发 LLM 总结
+			// 1M context 模型（如 Claude 1M / Qwen-max-longcontext）需设
+			// MAXIAN_CONTEXT_WINDOW=1000000 环境变量
 			{
 				const { estimateHistoryTokens, COMPACT_L1_THRESHOLD, COMPACT_L2_THRESHOLD } = await import('./contextCompaction.js');
 				const currentTokens = estimateHistoryTokens(history, finalSystemPrompt.length);
@@ -2425,9 +2427,12 @@ OBJECTIVE
 						const outTok = (chunk as any).outputTokens ?? 0;
 						totalInputTokens  += inTok;
 						totalOutputTokens += outTok;
+						// used = 当前**已占用的上下文窗口大小** ≈ input（input 已含全部历史）
+						// output 不占输入窗口（不参与下轮对话），但加一下更直观
 						const used = inTok + outTok;
-						// 典型 Claude 模型上下文窗口 200K tokens
-						const limit = 200000;
+						// limit 跟 contextCompaction 的 CONTEXT_WINDOW 一致（可被 env 覆盖）
+						// 而不是硬编码 200K
+						const limit = CONTEXT_WINDOW;
 						await server.sessionManager.emitEvent(sessionId, {
 							type:  'token_usage',
 							sessionId,

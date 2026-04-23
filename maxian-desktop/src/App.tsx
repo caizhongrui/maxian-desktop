@@ -354,7 +354,10 @@ export default function App() {
 
   // ── Token 用量 ─────────────────────────────────────────────────────────────
   const [tokenUsed, setTokenUsed] = createSignal(0)
-  const [tokenLimit] = createSignal(200000)
+  // tokenLimit 由后端根据实际模型窗口上报（token_usage 事件的 limit 字段）
+  // 默认 128K（Qwen-plus / GPT-4o / Claude Sonnet 标准），后端可通过
+  // MAXIAN_CONTEXT_WINDOW 环境变量覆盖，上报给前端后实时更新
+  const [tokenLimit, setTokenLimit] = createSignal(128000)
 
   // ── Slash 命令面板 ─────────────────────────────────────────────────────────
   const [showSlash, setShowSlash] = createSignal(false)
@@ -1654,8 +1657,13 @@ export default function App() {
     }
     // Token 用量事件
     if (type === "token_usage") {
-      const used = (e as any).used as number
+      const used  = (e as any).used  as number
+      const limit = (e as any).limit as number | undefined
       setTokenUsed(used)
+      // 后端上报的 limit 作为真实上下文窗口大小（覆盖前端默认 128K）
+      if (typeof limit === 'number' && limit > 0 && limit !== tokenLimit()) {
+        setTokenLimit(limit)
+      }
       return
     }
     // Todos 更新事件（AI 调用 todo_write 工具时触发）
@@ -4482,6 +4490,18 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.8',
+      date: '2026-04-23',
+      changes: [
+        '📊 修复：上下文进度条到头但实际没压缩 —— 进度条 limit（硬编码 200K）和压缩阈值（600K/850K）不一致',
+        '📊 后端 CONTEXT_WINDOW 默认改为 128K（Qwen-plus / GPT-4o / Claude Sonnet 标准），阈值 L1=55%、L2=85% 跟着动',
+        '📊 支持环境变量覆盖：MAXIAN_CONTEXT_WINDOW / MAXIAN_COMPACT_L1_THRESHOLD / MAXIAN_COMPACT_L2_THRESHOLD（1M context 模型设 MAXIAN_CONTEXT_WINDOW=1000000）',
+        '📊 后端 token_usage 事件上报的 limit 字段跟 CONTEXT_WINDOW 一致（之前硬编码 200K）',
+        '📊 前端接收后端上报的 limit 动态设置 tokenLimit（之前硬编码 200K 独立一份）',
+        '📊 效果：进度条真实反映当前模型窗口占用率；到 55% 触发 L1 压缩；触发前不会出现"进度条满但未压缩"的错觉',
+      ],
+    },
+    {
       version: '0.2.7',
       date: '2026-04-23',
       changes: [
@@ -4920,7 +4940,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.7</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.8</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4935,7 +4955,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.7
+                    当前版本 0.2.8
                   </Show>
                 </div>
               </div>

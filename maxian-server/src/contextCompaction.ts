@@ -18,12 +18,37 @@
 import type { MessageParam, ContentBlock } from '@maxian/core/api';
 import { AiProxyHandler } from '@maxian/core/api/aiproxy';
 
-// ─── 阈值配置（基于 1M 上下文） ─────────────────────────────────────────
-export const CONTEXT_WINDOW       = 1_000_000;
-export const COMPACT_L1_THRESHOLD = 600_000;   // 60% → 触发按类型剪枝
-export const COMPACT_L2_THRESHOLD = 850_000;   // 85% → 触发 LLM 总结
-export const RESERVED_OUTPUT      = 100_000;   // 预留给响应流
+// ─── 阈值配置 ─────────────────────────────────────────────────────────
+//
+// 默认目标：128K 上下文（Qwen-plus / GPT-4o / Claude Sonnet 标准）
+// 大于这个的模型通过环境变量调整：
+//   MAXIAN_CONTEXT_WINDOW=1000000       （比如 Claude 1M context）
+//   MAXIAN_COMPACT_L1_THRESHOLD=600000
+//   MAXIAN_COMPACT_L2_THRESHOLD=850000
+//
+// 阈值意义：
+//   L1（按类型剪枝）：~55% → 早剪防止上下文过大导致 AI 注意力涣散
+//   L2（LLM 总结）：~85% 且 L1 不够 → 激进压缩
+//   硬上限保留：~92% 给响应流（~8%）
+const parseIntEnv = (key: string, defaultVal: number): number => {
+	const v = process.env[key];
+	if (!v) return defaultVal;
+	const n = parseInt(v, 10);
+	return Number.isFinite(n) && n > 0 ? n : defaultVal;
+};
+
+export const CONTEXT_WINDOW       = parseIntEnv('MAXIAN_CONTEXT_WINDOW',       128_000);
+export const COMPACT_L1_THRESHOLD = parseIntEnv('MAXIAN_COMPACT_L1_THRESHOLD', Math.floor(CONTEXT_WINDOW * 0.55));
+export const COMPACT_L2_THRESHOLD = parseIntEnv('MAXIAN_COMPACT_L2_THRESHOLD', Math.floor(CONTEXT_WINDOW * 0.85));
+export const RESERVED_OUTPUT      = Math.floor(CONTEXT_WINDOW * 0.08);
 export const RECENT_KEEP_ROUNDS   = 5;         // 最近多少"用户-助手"对不动
+
+console.log(
+	`[Compaction] 阈值配置：窗口 ${CONTEXT_WINDOW.toLocaleString()} | ` +
+	`L1 剪枝 ${COMPACT_L1_THRESHOLD.toLocaleString()} | ` +
+	`L2 总结 ${COMPACT_L2_THRESHOLD.toLocaleString()} | ` +
+	`响应预留 ${RESERVED_OUTPUT.toLocaleString()} tokens`
+);
 
 // ─── 按工具类型的保留策略 ──────────────────────────────────────────────
 /**
