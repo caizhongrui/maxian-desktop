@@ -4482,6 +4482,17 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.7',
+      date: '2026-04-23',
+      changes: [
+        '🧠 修复：same_error_loop 导致 AI 误判"文件损坏"并螺旋升级（换工具绕过）',
+        '🧠 A. 重写 block 文案：从"🔴 same_error_loop 签名 XXX"改为第二人称直接指令"🚫 你已经用相同参数调用 read_file 失败了 3 次 + 原因排查清单 + 禁止换工具绕过"',
+        '🧠 A. 按工具类型定制排查清单：read_file 提示用 glob 搜、edit 提示先 read_file 重读、execute_command 提示 Windows 命令等价等',
+        '🧠 B. 原始错误透传：存最近 3 次完整 error（每次前 500 字），在 block 消息里全部返给 AI（之前只给 100 字签名让 AI 猜）',
+        '🧠 D. readFileTool 首次失败就引导：根据父目录是否存在 / ENOENT / EACCES / EISDIR / 编码错误 给出针对性提示，指向正确工具（glob / list_files），避免 AI 原参数重试',
+      ],
+    },
+    {
       version: '0.2.6',
       date: '2026-04-23',
       changes: [
@@ -4909,7 +4920,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.6</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.7</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4924,7 +4935,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.6
+                    当前版本 0.2.7
                   </Show>
                 </div>
               </div>

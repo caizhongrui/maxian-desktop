@@ -541,10 +541,12 @@ export async function readFileTool(
 
 		// 检查文件是否存在
 		if (!fs.existsSync(absolutePath)) {
+			const basename = path.basename(absolutePath);
 			// "Did you mean?" 模糊匹配（参考 OpenCode read.ts）
 			const parentDir = path.dirname(absolutePath);
-			const targetName = path.basename(absolutePath).toLowerCase();
-			if (fs.existsSync(parentDir)) {
+			const parentExists = fs.existsSync(parentDir);
+			const targetName = basename.toLowerCase();
+			if (parentExists) {
 				try {
 					const dirContents = fs.readdirSync(parentDir);
 					const minMatchLen = Math.max(3, Math.floor(targetName.length * 0.6));
@@ -558,11 +560,19 @@ export async function readFileTool(
 					if (suggestions.length > 0) {
 						const parentDir2 = path.dirname(filePath);
 						const suggestionPaths = suggestions.map(f => path.join(parentDir2, f));
-						return `Error: File not found: ${filePath}\n\nDid you mean one of these?\n${suggestionPaths.map(p => `  - ${p}`).join('\n')}`;
+						return `Error: File not found: ${filePath}\n\nDid you mean one of these?\n${suggestionPaths.map(p => `  - ${p}`).join('\n')}\n\n💡 如果上面都不对，用 glob "**/${basename}" 在整个 workspace 里搜索正确位置，再用准确路径 read_file。不要重试相同路径。`;
 					}
 				} catch { /* ignore */ }
 			}
-			return `Error: File not found: ${filePath}`;
+			// D. 根据"父目录是否存在"给出不同的定位指引
+			const guidance = parentExists
+				? `💡 父目录 ${path.dirname(filePath)} 存在但里面没有 ${basename}。
+建议用 \`list_files\` 看这个目录实际有什么文件；或者用 \`glob\` 搜 "**/${basename}" 在整个 workspace 里定位。
+**不要重试相同路径**。`
+				: `💡 父目录 ${path.dirname(filePath)} 也不存在。整个路径可能是错的。
+建议先用 \`list_files\` 看 workspace 根目录结构，或者用 \`glob\` 搜 "**/${basename}" 定位真实文件。
+**不要重试相同路径**。`;
+			return `Error: File not found: ${filePath}\n\n${guidance}`;
 		}
 
 		// 获取文件状态
@@ -673,7 +683,20 @@ export async function readFileTool(
 
 		return formatFileContent(filePath, content, lines.length, encoding, startLine, endLine, false, isLargeFile, stat.size);
 	} catch (error) {
-		return `Error reading file: ${(error as Error).message}`;
+		const msg = (error as Error).message;
+		const code = (error as NodeJS.ErrnoException).code;
+		// D. 根据 Node 系统错误码给出针对性指引
+		let hint = '';
+		if (code === 'EACCES' || msg.includes('EACCES')) {
+			hint = '\n\n💡 权限不足。直接向用户汇报文件无法访问，不要重试。';
+		} else if (code === 'EISDIR' || msg.includes('EISDIR')) {
+			hint = '\n\n💡 路径是目录不是文件，用 `list_files` 查看目录内容。';
+		} else if (code === 'ENOENT' || msg.includes('ENOENT')) {
+			hint = '\n\n💡 文件不存在。用 `glob` 搜 "**/<basename>" 定位真实路径，不要重试相同路径。';
+		} else if (msg.toLowerCase().includes('encoding') || msg.toLowerCase().includes('binary')) {
+			hint = '\n\n💡 文件可能是二进制或编码异常。如果是代码文件，检查 BOM 或非 UTF-8 编码；二进制文件不要用 read_file。';
+		}
+		return `Error reading file: ${msg}${hint}`;
 	}
 }
 

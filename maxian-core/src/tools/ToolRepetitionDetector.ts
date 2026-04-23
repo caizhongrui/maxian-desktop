@@ -65,8 +65,16 @@ export class ToolRepetitionDetector {
 	/**
 	 * 最近的错误签名队列（最多保留 10 个）。
 	 * 同一签名出现 ≥3 次时，check() 会立即拒绝后续同类调用。
+	 *
+	 * B 阶段改造：存储结构从 string[] 升级为对象数组，保留完整原始错误，
+	 * 在 block 消息里透传给 AI，避免它凭 signature 前缀猜测"文件损坏"。
 	 */
-	private recentErrorSignatures: string[] = [];
+	private recentErrorSignatures: Array<{
+		signature:  string;
+		toolName:   string;
+		path:       string;
+		fullError:  string;   // 完整原始 error（取前 500 字）
+	}> = [];
 	private readonly ERROR_SIGNATURE_HISTORY_SIZE = 10;
 	private readonly SAME_ERROR_LOOP_THRESHOLD = 3;
 	/**
@@ -103,14 +111,35 @@ export class ToolRepetitionDetector {
 		this.addToHistory(currentToolCallBlock.name, paramsHash, entryPath);
 
 		// Same-error-loop 检测：若历史中存在同一 error signature 出现 ≥3 次，
-		// 立即拦截当前调用，要求模型换一种参数/策略。
+		// 立即拦截当前调用，并用"第二人称直接指令 + 原始错误透传 + 排查清单"引导 AI 正确处理。
+		// A + B 阶段改造：避免 AI 把 loop 错误当成"系统 bug"/"文件损坏"。
 		const sameErrorInfo = this.findDominantErrorSignature();
 		if (sameErrorInfo) {
+			const tool = sameErrorInfo.toolName;
+			const path = sameErrorInfo.path;
+			const errs = sameErrorInfo.recentErrors;
+			// 根据工具类型给定制化的排查清单
+			const checklist = this.buildSameErrorChecklist(tool, path);
+			// 把前 3 次完整原始错误透传给 AI（避免它凭 signature 前缀猜）
+			const rawErrs = errs
+				.map((e, i) => `【第 ${i + 1} 次原始错误】${e}`)
+				.join('\n\n');
+			const detail =
+`🚫 你已经用相同参数调用 ${tool}${path ? ` (${path})` : ''} 失败了 ${sameErrorInfo.count} 次。
+
+【这不是系统异常，是你的策略问题】以下是原始错误，请仔细阅读：
+
+${rawErrs}
+
+${checklist}
+
+禁止继续对这个目标用 ${tool} 重试（包括换参数微调），也禁止换工具（execute_command / apply_patch / PowerShell / bash 等）撞同一个目标绕过本限制。
+如果排查清单全部试过仍无法解决，**直接向用户汇报失败**，列出你已经试过的路径/方法，让用户确认。`;
 			return {
 				allowExecution: false,
 				askUser: {
 					messageKey: 'doom_loop_detected',
-					messageDetail: `🔴 same_error_loop: 最近同一错误签名出现了 ${sameErrorInfo.count} 次。签名：${sameErrorInfo.signature}\n\n请先分析失败原因，更换参数或策略后再重试；禁止继续用相同的调用方式撞墙。`,
+					messageDetail: detail,
 				},
 			};
 		}
@@ -628,6 +657,65 @@ export class ToolRepetitionDetector {
 	}
 
 	/**
+	 * A 阶段：按工具类型生成定制化的"错误排查清单"
+	 * 避免 AI 把 block 当系统异常来编故事（"文件损坏"/"权限问题"之类）
+	 */
+	private buildSameErrorChecklist(toolName: string, path: string): string {
+		const basename = path ? path.split(/[\\/]/).pop() ?? '' : '';
+		switch (toolName) {
+			case 'read_file':
+				return `【排查清单（read_file 失败）】
+1. **路径相对根位置错了**：workspace 根可能不是你假设的那个。
+   → 用 \`glob\` 搜 "**/${basename || 'yourfile'}" 定位真实路径
+2. **文件真不存在**：
+   → 用 \`list_files\` 看上层目录结构
+3. **大小写或 typo**：Windows 不区分大小写，macOS/Linux 区分
+   → 对照已知文件路径仔细核对
+4. **文件是二进制或超大**：
+   → read_file 返回过大会被截断；超大文件改用 grep 定点搜索`;
+			case 'edit':
+			case 'multiedit':
+				return `【排查清单（${toolName} 失败）】
+1. **old_string 对不上**：AI 记忆里的内容可能过期
+   → 先 \`read_file\` 重新读一遍当前文件状态
+2. **缩进 / 空白不匹配**：old_string 里的 tab/空格跟文件里的实际不同
+   → read_file 后原文抠出来用，不要自己手写 old_string
+3. **多处匹配，无法确定替换位置**：
+   → 在 old_string 里前后各多包几行形成唯一上下文
+4. **文件在你读之后被外部修改**：
+   → 重新 read_file 再 edit`;
+			case 'write_to_file':
+				return `【排查清单（write_to_file 失败）】
+1. **路径错了 / 目录不存在**：
+   → 先 \`list_files\` 确认父目录存在
+2. **权限问题**：
+   → Windows 下检查是否 Administrator 权限；Unix 下查 chmod
+3. **磁盘满 / 文件被锁**：原始错误里会有 ENOSPC / EBUSY`;
+			case 'bash':
+			case 'execute_command':
+				return `【排查清单（命令失败）】
+1. **命令不存在**：Windows 下 ls/grep/cat 等 Unix 命令默认不可用
+   → 使用 PowerShell 等价命令 或 先装 Git Bash
+2. **cwd 不对**：命令在 workspace 根跑还是在子目录跑？
+   → 原始错误里常见 ENOENT / "no such directory"
+3. **路径分隔符**：Windows 用 \\ 或 /，Unix 只用 /`;
+			case 'grep':
+			case 'search_files':
+				return `【排查清单（搜索失败）】
+1. **正则语法**：不同后端正则风格不同（ripgrep vs POSIX）
+   → 简化 pattern，避免复杂前后断言
+2. **search path 不存在**：
+   → 先 \`list_files\` 确认
+3. **文件数量爆炸**：结果被截断，改用更精确的 pattern + 子目录`;
+			default:
+				return `【排查清单】
+1. 仔细阅读上面的原始错误，错误消息里通常直接指出了原因（ENOENT / EACCES / EISDIR / syntax error 等）
+2. 如果是"not found"类错误，先用 glob / list_files 确认真实路径/存在性
+3. 如果是权限/编码错误，直接向用户汇报，让用户介入处理`;
+		}
+	}
+
+	/**
 	 * 从工具执行结果中提取错误签名。
 	 * 只在返回文本中含明显错误关键字时生成签名，否则返回 null。
 	 * 签名 = 错误消息前 100 字符 + 工具名 + 目标文件路径。
@@ -661,26 +749,46 @@ export class ToolRepetitionDetector {
 		if (!sig) {
 			return;
 		}
-		this.recentErrorSignatures.push(sig);
+		const path = (toolInput && (toolInput.path || toolInput.target_file || toolInput.file_path)) || '';
+		this.recentErrorSignatures.push({
+			signature: sig,
+			toolName,
+			path: String(path),
+			fullError: String(toolResult).substring(0, 500),
+		});
 		if (this.recentErrorSignatures.length > this.ERROR_SIGNATURE_HISTORY_SIZE) {
 			this.recentErrorSignatures.shift();
 		}
 	}
 
 	/**
-	 * 返回已达阈值的 dominant 错误签名（若存在）。
+	 * 返回已达阈值的 dominant 错误签名（若存在），并附带最近几次的原始错误。
 	 */
-	private findDominantErrorSignature(): { signature: string; count: number } | null {
+	private findDominantErrorSignature(): {
+		signature: string;
+		count: number;
+		toolName: string;
+		path: string;
+		recentErrors: string[];
+	} | null {
 		if (this.recentErrorSignatures.length < this.SAME_ERROR_LOOP_THRESHOLD) {
 			return null;
 		}
 		const counts = new Map<string, number>();
-		for (const s of this.recentErrorSignatures) {
-			counts.set(s, (counts.get(s) || 0) + 1);
+		for (const e of this.recentErrorSignatures) {
+			counts.set(e.signature, (counts.get(e.signature) || 0) + 1);
 		}
 		for (const [signature, count] of counts) {
 			if (count >= this.SAME_ERROR_LOOP_THRESHOLD) {
-				return { signature: signature.substring(0, 160), count };
+				// 找到所有匹配该签名的条目，回传前 3 次完整错误
+				const matches = this.recentErrorSignatures.filter(e => e.signature === signature);
+				return {
+					signature: signature.substring(0, 160),
+					count,
+					toolName:  matches[0]?.toolName ?? '',
+					path:      matches[0]?.path ?? '',
+					recentErrors: matches.slice(0, 3).map(e => e.fullError),
+				};
 			}
 		}
 		return null;
