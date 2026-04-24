@@ -4490,6 +4490,18 @@ export default function App() {
   }
   const CHANGELOG: ChangelogEntry[] = [
     {
+      version: '0.2.10',
+      date: '2026-04-24',
+      changes: [
+        '🛡 修复：AI 修改代码会覆盖用户在其他 IDE 的手改（"写了 A/B 两个方法→我手改了→让 AI 优化 A→A/B 的手改都被删"）',
+        '🛡 根因：FileTime.assert 只能拦"没读"或"读完后被外部改过"，拦不住"AI 读了但继续用旧脑子里的内容整体覆盖"',
+        '🛡 write_to_file 新增 stale-overwrite 检测：对已存在文件，对比新内容 vs 磁盘现状；如果删除行数 > 10 且 > 新增行数的 2 倍 → 拦截',
+        '🛡 拦截消息直接告诉 AI："用 edit/multiedit 做局部修改，不要 write_to_file 整体重写"',
+        '🛡 系统提示词加硬规则：修改已存在文件一律用 edit/multiedit；write_to_file 仅限新建文件或用户明确要求整体重写',
+        '🛡 TOOL SELECTION 表改注："改已存在文件的局部" → edit，"创建新文件" → write_to_file，明确写上"write_to_file 使用禁区"',
+      ],
+    },
+    {
       version: '0.2.9',
       date: '2026-04-23',
       changes: [
@@ -4950,7 +4962,7 @@ export default {
           <img class="about-logo" src={logoUrl} alt="Maxian" />
           <div style="font-size:20px;font-weight:700;color:var(--text-base)">码弦 Maxian</div>
           <div style="font-size:13px;color:var(--text-muted)">智能 AI 编程助手</div>
-          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.9</div>
+          <div style="font-size:12px;color:var(--text-faint)">版本 0.2.10</div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title">软件更新</div>
@@ -4965,7 +4977,7 @@ export default {
                     </span>
                   </Show>
                   <Show when={!updateMsg()}>
-                    当前版本 0.2.9
+                    当前版本 0.2.10
                   </Show>
                 </div>
               </div>

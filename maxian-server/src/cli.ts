@@ -518,6 +518,82 @@ function saveFileSnapshot(sessionId: string, absolutePath: string): void {
  *
  * emitEvent: 可选的 SSE 事件发射函数，用于发送 file_changed 等事件
  */
+/**
+ * 🛡 Stale-overwrite 检测（v0.2.10）
+ *
+ * 问题背景：
+ *   FileTime.assert 只能检测"没读"或"读完后被外部改过"，但无法检测
+ *   "AI 读了文件、看到了用户的手改，但继续用它脑子里的旧版本 write_to_file 覆盖"。
+ *
+ * 检测逻辑：
+ *   - 对比 old（磁盘当前内容）vs new（AI 要写入的内容）
+ *   - 计算行集合差：removed = oldLines - newLines, added = newLines - oldLines
+ *   - 如果 removed 远大于 added（疑似"只删不加"的整体重写）→ 判定为陈旧覆盖嫌疑
+ *   - 阈值：removed > 10 行 且 removed > added * 2（至少删除 10 行且至少是新增的 2 倍）
+ *
+ * 误报情况：
+ *   - 正常的大范围重构（比如删掉一整个废弃函数）
+ *   - AI 根据用户要求整体重写文件
+ *   → 这类场景 AI 会在回复里明确提到"整体重写"，用户能看到意图；
+ *     必要时通过 edit 分段完成即可
+ *
+ * 放行情况：
+ *   - 新增行数 ≥ 删除行数：显然不是"陈旧覆盖"
+ *   - 删除行数 < 10：改动太小，不值得拦
+ *   - 空白行/注释差异：按内容去重会自然相抵
+ */
+function detectStaleOverwrite(
+	oldContent: string,
+	newContent: string,
+	filePath: string,
+): { block: boolean; message: string } {
+	// 快速短路：new 更长 → 显然是在加内容，放行
+	if (newContent.length >= oldContent.length * 0.9) {
+		return { block: false, message: '' };
+	}
+
+	const oldLines = oldContent.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+	const newLines = newContent.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+	// 小文件不拦（噪音大）
+	if (oldLines.length < 15) {
+		return { block: false, message: '' };
+	}
+
+	const newSet = new Set(newLines);
+	const oldSet = new Set(oldLines);
+	const removed = oldLines.filter(l => !newSet.has(l)).length;
+	const added   = newLines.filter(l => !oldSet.has(l)).length;
+
+	// 核心判定：删除行数 > 10 且 > 新增行数的 2 倍
+	if (removed > 10 && removed > added * 2) {
+		return {
+			block: true,
+			message:
+`🚫 write_to_file 被拦截：检测到"陈旧覆盖"嫌疑
+
+目标文件：${filePath}
+- 磁盘当前非空行数：${oldLines.length}
+- 你要写入的非空行数：${newLines.length}
+- 你的新内容相比磁盘**删除了 ${removed} 行**，仅新增 ${added} 行
+
+这通常表示你**没有基于文件最新内容构造 write_to_file**，而是用了脑子里的旧版本
+整体覆盖。结果会删除用户（或其他 AI）在外部对这个文件做的修改。
+
+【正确做法】
+1. **局部修改请用 edit / multiedit 工具**——精确定位 old_string 替换为 new_string
+   不要用 write_to_file 整体重写已存在文件
+2. 如果确实需要整体重写（比如用户明确要求"重新写一遍"），先 read_file 确认
+   当前完整内容，把用户的所有改动融合进你的新版本后再 write_to_file
+
+禁止原参数重试 write_to_file。必须改用 edit/multiedit，或者先重新 read_file
+确认当前完整内容后再决定策略。`
+		};
+	}
+
+	return { block: false, message: '' };
+}
+
 async function executeToolCall(
 	ctx: NodeToolContext,
 	name: string,
@@ -550,6 +626,23 @@ async function executeToolCall(
 					} catch (e) {
 						return `Error: ${(e as Error).message}`;
 					}
+				}
+
+				// 🛡 Stale-overwrite 检测（v0.2.10）：
+				// FileTime 只能检测"没读"或"读完后磁盘被改过"，不能检测
+				// "AI 读了但无视新内容，用它脑子里的旧内容覆盖"的场景。
+				// 对已存在文件，比较 new_content vs 磁盘当前内容：
+				//   - 如果新内容**删除的行数明显大于新增**，判定为"陈旧覆盖"嫌疑 → 拒绝
+				//   - 提示 AI 用 edit 做局部修改而非整体重写
+				if (!wIsNew) {
+					const newContent = String(params.content ?? '');
+					try {
+						const oldContent = fs.readFileSync(wAbsPath, 'utf8');
+						const safety = detectStaleOverwrite(oldContent, newContent, wFilePath);
+						if (safety.block) {
+							return `Error: ${safety.message}`;
+						}
+					} catch { /* 读失败就放行，不挡正常流程 */ }
 				}
 
 				if (ctx.sessionId) saveFileSnapshot(ctx.sessionId, wAbsPath);
@@ -2083,10 +2176,14 @@ HARD RULES
 
 1. **【语言】所有自然语言必须是简体中文**——思考过程、分析、说明、总结、错误解释——英文句子即为违规
 2. **先读后改**：任何 edit/write_to_file 前必须先 read_file 完整读过；未读直接失败
-3. **并行只读**：需要读多个无依赖文件时，**必须在同一轮同时调用**（如同时调用 read_file A + read_file B），禁止逐个顺序读取
-4. **工具失败后**：禁止立即用相同参数重试；下一步必须是 read_file 或 search_files 验证当前真实状态
-5. **编译/类型错误**：先 read_file 错误行 ±5 行，不要只看错误消息就改
-6. **禁止废话**：不要复述将要写的代码，不要以问题结尾
+3. **🔥 修改已存在文件一律用 edit / multiedit**，**严禁** write_to_file 整体覆盖：
+   - write_to_file 仅用于**新建文件**，或用户**明确要求"整体重写"**
+   - 即使你自认为要大改，也**必须分段用 edit**——因为整体覆盖会把用户在外部（其他 IDE）或同会话前几轮的手改全删掉
+   - 系统会对"write_to_file 删除远多于新增"的调用自动拦截
+4. **并行只读**：需要读多个无依赖文件时，**必须在同一轮同时调用**，禁止逐个顺序读取
+5. **工具失败后**：禁止立即用相同参数重试；下一步必须是 read_file 或 search_files 验证当前真实状态
+6. **编译/类型错误**：先 read_file 错误行 ±5 行，不要只看错误消息就改
+7. **禁止废话**：不要复述将要写的代码，不要以问题结尾
 
 ====
 
@@ -2099,9 +2196,14 @@ TOOL SELECTION
 | 找"某个字符串/符号/函数名"在哪 | search_files（regex） |
 | 看一个已知路径文件 | read_file |
 | 浏览一个目录结构 | list_files |
-| 改一个位置 | edit |
-| 创建新文件 | write_to_file |
+| **改已存在文件的局部** | **edit**（一处）/ **multiedit**（多处） |
+| 创建**新文件** | write_to_file |
 | 执行命令/测试/构建 | execute_command |
+
+**⚠️ write_to_file 使用禁区**（违反会被系统拦截并报错）：
+- 目标文件**已存在** → 必须改用 edit / multiedit
+- 你没 read_file 就想 write_to_file 覆盖 → 拦截
+- 新内容删除行数远大于新增 → 拦截（防止覆盖用户/他人手改）
 
 **并行工具规则（减少 API 往返）**：
 1. 改文件前**必须**先 read_file 完整读一次
